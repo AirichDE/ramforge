@@ -1,0 +1,27 @@
+[package]
+name = "ramforge"
+description = "RAMForge – portabler RAM-Test, Benchmark und Hardware-Monitor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+ramforge-core = { path = "../../crates/core" }
+ramforge-hw = { path = "../../crates/hw" }
+ramforge-update = { path = "../../crates/update", features = ["ui"] }
+ramforge-gpu = { path = "../../crates/gpu" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+egui_plot = "0.38"
+image = { version = "0.25", default-features = false, features = ["png"] }
+rfd = "0.18"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

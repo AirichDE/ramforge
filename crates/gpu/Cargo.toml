@@ -1,0 +1,18 @@
+[package]
+name = "ramforge-gpu"
+description = "RAMForge GPU benchmark: VRAM bandwidth, FP32 compute, host transfers (wgpu)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# The benchmark itself (wgpu, ~5 MB). Without it only the result types exist,
+# so RAMForge.exe stays small and the GPU part ships as RAMForge-GPU.exe.
+bench = ["dep:wgpu", "dep:pollster"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+wgpu = { version = "30", optional = true }
+pollster = { version = "1", optional = true }

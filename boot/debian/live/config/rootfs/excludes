@@ -1,0 +1,7 @@
+boot/initrd.img*
+boot/vmlinuz*
+boot/System.map*
+boot/config-*
+var/lib/apt/lists/*
+var/cache/apt/*.bin
+var/cache/apt/archives/*.deb

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Removes what a hardware test system never needs (both editions).
+set -e
+for k in /usr/lib/modules/*; do
+    for d in sound drivers/media drivers/net/wireless net/wireless net/mac80211 net/bluetooth \
+             drivers/bluetooth drivers/infiniband drivers/staging drivers/isdn drivers/iio \
+             drivers/net/can net/can drivers/nfc net/nfc drivers/input/joystick drivers/input/touchscreen; do
+        rm -rf "$k/kernel/$d"
+    done
+    depmod -a "$(basename "$k")"
+done
+rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
+find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'de*' ! -name 'en*' ! -name 'locale.alias' -exec rm -rf {} +
+apt-get clean

@@ -1,0 +1,39 @@
+#!/bin/bash
+# Runs as root before the RAMForge session (ExecStartPre=+ in ramforge.service).
+# Writes /run/ramforge.env for the unprivileged session.
+LOG=/run/ramforge-session.log
+SERIAL=/dev/ttyS0
+log() {
+    echo "[ramforge] $*" >> "$LOG"
+    [ -w "$SERIAL" ] && echo "[ramforge] $*" > "$SERIAL" 2>/dev/null
+}
+touch "$LOG" && chown ramforge: "$LOG"
+modprobe -a i2c-dev ee1004 spd5118 jc42 2>/dev/null
+chvt 1 2>/dev/null
+setterm --term linux --blank 0 --powerdown 0 < /dev/tty1 > /dev/tty1 2>/dev/null
+
+# Data on the boot stick if writable (FAT32/exFAT), otherwise only in RAM.
+# Internal disks are never mounted.
+DATA=/run/RAMForge-data
+VOLATILE=1
+MED=/run/live/medium
+if mountpoint -q "$MED"; then
+    FS="$(findmnt -no FSTYPE "$MED")"
+    if [ "$FS" = "vfat" ] || [ "$FS" = "exfat" ]; then
+        if mount -o remount,rw "$MED" 2>>"$LOG" && mkdir -p "$MED/RAMForge/RAMForge-data"; then
+            DATA="$MED/RAMForge/RAMForge-data"
+            VOLATILE=0
+        fi
+    fi
+fi
+mkdir -p "$DATA"
+[ "$VOLATILE" = 1 ] && chown ramforge: "$DATA"
+cat > /run/ramforge.env <<ENV
+RAMFORGE_DATA=$DATA
+RAMFORGE_DATA_VOLATILE=$VOLATILE
+RAMFORGE_BOOT=1
+RAMFORGE_EDITION=boot
+RAMFORGE_VARIANT=$(cat /etc/ramforge-edition 2>/dev/null || echo full)
+LANG=de_DE.UTF-8
+ENV
+log "Daten: $DATA (flüchtig=$VOLATILE), Medium: $(findmnt -no SOURCE,FSTYPE "$MED" 2>/dev/null)"

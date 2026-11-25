@@ -1,0 +1,52 @@
+#!/bin/bash
+# RAMForge boot edition session (tty1, user "ramforge", no desktop).
+# Started by ramforge.service after ramforge-prepare (root) set up drivers and
+# the data folder. Internal disks are never mounted or written.
+LOG=/run/ramforge-session.log
+SERIAL=/dev/ttyS0
+log() {
+    echo "[ramforge] $*" >> "$LOG"
+    [ -w "$SERIAL" ] && echo "[ramforge] $*" > "$SERIAL" 2>/dev/null
+}
+
+# Prepared as root by ramforge-prepare.
+set -a
+. /run/ramforge.env
+set +a
+log "Sitzung als $(id -un), XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+
+run_gui() {
+    # GPU rendering first; software rendering if that fails.
+    log "starte cage (GPU)"
+    cage -s -- /usr/local/bin/ramforge >>"$LOG" 2>&1 && return 0
+    log "cage (GPU) beendet mit $?, versuche Software-Grafik"
+    WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 cage -s -- /usr/local/bin/ramforge >>"$LOG" 2>&1
+}
+
+while true; do
+    clear
+    echo "RAMForge wird gestartet …"
+    if run_gui; then
+        log "RAMForge regulär beendet"
+    else
+        log "Grafik fehlgeschlagen (Exit $?)"
+        [ -w "$SERIAL" ] && tail -n 30 "$LOG" > "$SERIAL" 2>/dev/null
+        clear
+        echo "Die grafische Oberfläche konnte nicht starten. Letzte Meldungen:"
+        echo
+        tail -n 15 "$LOG"
+        echo
+        echo "Tipp: Bei schwarzem Bild im Startmenü „Grafik-Sicherheitsmodus“ wählen."
+        sleep 20
+    fi
+    sync
+    echo
+    echo "RAMForge wurde beendet."
+    echo "  [Enter] neu starten   s = Konsole   a = ausschalten   r = Rechner neu starten"
+    read -r -t 120 choice
+    case "$choice" in
+        s) exec bash --login ;;
+        a) systemctl poweroff ;;
+        r) systemctl reboot ;;
+    esac
+done

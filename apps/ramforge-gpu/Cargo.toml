@@ -1,0 +1,15 @@
+[package]
+name = "ramforge-gpu-module"
+description = "RAMForge GPU-Modul: optionaler GPU-Benchmark (VRAM, FP32, Übertragung)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "RAMForge-GPU"
+path = "src/main.rs"
+
+[dependencies]
+ramforge-gpu = { path = "../../crates/gpu", features = ["bench"], package = "ramforge-gpu" }
+serde_json.workspace = true

@@ -1,0 +1,38 @@
+#!/bin/sh
+# Runs inside the live system image while it is built.
+set -e
+sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/; s/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+locale-gen
+echo 'LANG=de_DE.UTF-8' > /etc/default/locale
+EDITION="$(cat /etc/ramforge-edition 2>/dev/null || echo full)"
+if [ "$EDITION" != "ram" ]; then
+    systemctl enable systemd-networkd.service systemd-resolved.service || true
+fi
+systemctl enable ramforge.service
+systemctl set-default multi-user.target
+# The live system never needs these.
+systemctl mask apt-daily.timer apt-daily-upgrade.timer man-db.timer 2>/dev/null || true
+chmod 0755 /usr/local/bin/ramforge /usr/local/bin/ramforge-session /usr/local/bin/ramforge-prepare
+# Unprivileged kiosk user (cage refuses to run as root).
+id ramforge >/dev/null 2>&1 || useradd -m -s /bin/bash ramforge
+for g in video input render i2c; do
+    getent group "$g" >/dev/null || groupadd -r "$g"
+    usermod -aG "$g" ramforge
+done
+# i2c-dev nodes (SPD) for the i2c group
+echo 'KERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"' > /etc/udev/rules.d/60-ramforge-i2c.rules
+echo ramforge > /etc/hostname
+
+# "Nur RAM-Test": drop kernel drivers this variant never needs (network,
+# wireless, sound, video capture, discrete GPUs whose firmware is missing
+# anyway). The screen then runs on the firmware framebuffer (simpledrm).
+if [ "$EDITION" = "ram" ]; then
+    for k in /lib/modules/*; do
+        for d in drivers/net drivers/media drivers/infiniband drivers/staging drivers/isdn                  drivers/bluetooth drivers/comedi drivers/iio drivers/gpu/drm/amd drivers/gpu/drm/radeon                  drivers/gpu/drm/nouveau drivers/target drivers/scsi/qla2xxx drivers/scsi/lpfc                  drivers/scsi/mpt3sas drivers/scsi/be2iscsi drivers/scsi/bfa drivers/scsi/qedf drivers/scsi/qedi                  net/wireless net/mac80211 net/bluetooth sound; do
+            rm -rf "$k/kernel/$d"
+        done
+        depmod "$(basename "$k")"
+    done
+    update-initramfs -u -k all
+    rm -rf /usr/share/doc/*/changelog* /usr/share/man /usr/share/info
+fi

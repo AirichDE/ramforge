@@ -1,0 +1,38 @@
+# Display: Wayland kiosk compositor + Mesa (GPU drivers and llvmpipe fallback)
+cage
+# cage 0.1.4 (Debian 12) refuses to start without XWayland
+xwayland
+libgl1-mesa-dri
+libegl1
+libgles2
+libxkbcommon0
+libwayland-client0
+libwayland-egl1
+libwayland-cursor0
+fonts-dejavu-core
+fonts-symbola
+# Hardware readout: SMBus/SPD, sensors, PCI/USB, DMI
+i2c-tools
+lm-sensors
+pciutils
+usbutils
+dmidecode
+# CPU microcode and common GPU/firmware blobs
+amd64-microcode
+intel-microcode
+firmware-linux-free
+firmware-amd-graphics
+firmware-misc-nonfree
+# Network for update check and news (DHCP via systemd-networkd), TLS roots
+ca-certificates
+systemd-resolved
+# Console and locale
+kbd
+console-setup
+locales
+dbus
+# Seat access for the Wayland kiosk (logind session of the autologin, seatd as fallback)
+libpam-systemd
+seatd
+# Lets the logged-in kiosk user power off / reboot
+polkitd

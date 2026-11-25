@@ -1,0 +1,31 @@
+/target
+/dist
+RAMForge-data/
+*.pdb
+# Never commit third-party proprietary binaries or images.
+*.iso
+*.img
+
+# Server/website infrastructure lives in the private ramforge-infra repo.
+/server/
+/website/
+
+# Secrets: this repository is PUBLIC. Never commit keys or credentials.
+*.key
+*.pem
+*.p12
+*.pfx
+*.priv
+id_rsa*
+id_ed25519*
+secrets/
+.env
+.env.*
+*.secret
+.ramforge/
+# Signed release artifacts are built and uploaded, not committed.
+latest.json
+latest.json.sig
+*.sig
+*.exe.new
+*.exe.old
