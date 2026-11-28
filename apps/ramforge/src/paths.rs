@@ -96,6 +96,10 @@ pub struct Settings {
     /// Date (YYYY-MM-DD) of the last statistics ping.
     pub last_ping: String,
     pub last_news_id: i64,
+    /// UI language: "auto" (Windows display language / LANG), "de" or "en".
+    pub language: String,
+    /// UI zoom (Ctrl +/-/0). 0 = automatic: 100 %, smaller on small screens.
+    pub zoom: f32,
 }
 
 impl Default for Settings {
@@ -115,6 +119,8 @@ impl Default for Settings {
             install_id: String::new(),
             last_ping: String::new(),
             last_news_id: 0,
+            language: "auto".into(),
+            zoom: 0.0,
         }
     }
 }

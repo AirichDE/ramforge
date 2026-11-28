@@ -8,6 +8,8 @@
 
 use crate::errors::{ErrorSink, MemError};
 use crate::rng::{splitmix, Rng};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -142,33 +144,33 @@ impl TestKind {
 
     pub fn name(self) -> &'static str {
         match self {
-            TestKind::AddressOwn => "Eigene Adresse",
+            TestKind::AddressOwn => t!("Eigene Adresse", "Own address"),
             TestKind::MovInvOnesZeros => "Moving Inversions 0/1",
             TestKind::MovInvWalking8 => "Moving Inversions 8-Bit",
-            TestKind::MovInvRandom => "Moving Inversions Zufall",
-            TestKind::RandomSequence => "Zufallsfolge",
-            TestKind::RandomAccess => "Zufallszugriff",
-            TestKind::BlockMove => "Block verschieben",
-            TestKind::WalkingBits => "Wandernde Bits",
+            TestKind::MovInvRandom => t!("Moving Inversions Zufall", "Moving inversions random"),
+            TestKind::RandomSequence => t!("Zufallsfolge", "Random sequence"),
+            TestKind::RandomAccess => t!("Zufallszugriff", "Random access"),
+            TestKind::BlockMove => t!("Block verschieben", "Block move"),
+            TestKind::WalkingBits => t!("Wandernde Bits", "Walking bits"),
             TestKind::Modulo20 => "Modulo 20",
-            TestKind::Hammer => "Row Hammer (experimentell)",
+            TestKind::Hammer => t!("Row Hammer (experimentell)", "Row hammer (experimental)"),
             TestKind::BitFade => "Bit Fade",
         }
     }
 
     pub fn description(self) -> &'static str {
         match self {
-            TestKind::AddressOwn => "Jedes Wort enthält seine eigene Adresse. Findet Adressierungsfehler.",
-            TestKind::MovInvOnesZeros => "Füllt mit 0 bzw. 1, prüft und invertiert auf- und abwärts.",
-            TestKind::MovInvWalking8 => "Moving Inversions mit 8 wandernden Bitmustern. Findet Kopplungsfehler.",
-            TestKind::MovInvRandom => "Moving Inversions mit Zufallsmustern.",
-            TestKind::RandomSequence => "Reproduzierbare Zufallsfolge schreiben, prüfen, invertieren.",
-            TestKind::RandomAccess => "Schreibt in zufälliger Reihenfolge. Belastet Speichercontroller und Zeilenwechsel.",
-            TestKind::BlockMove => "Kopiert große Blöcke (Burst-Transfers) und prüft das Ergebnis.",
-            TestKind::WalkingBits => "Rotierende Einzelbits und Einzelnullen. Findet Datenleitungsfehler.",
-            TestKind::Modulo20 => "Muster an jeder 20. Stelle, Störmuster dazwischen. Findet Nachbareffekte.",
-            TestKind::Hammer => "Liest Adresspaare sehr oft mit Cache-Flush. Kann Bitkipper in Nachbarzeilen auslösen.",
-            TestKind::BitFade => "Füllt, wartet und prüft. Findet Zellen, die ihre Ladung verlieren (Refresh).",
+            TestKind::AddressOwn => t!("Jedes Wort enthält seine eigene Adresse. Findet Adressierungsfehler.", "Every word holds its own address. Finds addressing errors."),
+            TestKind::MovInvOnesZeros => t!("Füllt mit 0 bzw. 1, prüft und invertiert auf- und abwärts.", "Fills with 0 and 1, checks and inverts upwards and downwards."),
+            TestKind::MovInvWalking8 => t!("Moving Inversions mit 8 wandernden Bitmustern. Findet Kopplungsfehler.", "Moving inversions with 8 walking bit patterns. Finds coupling faults."),
+            TestKind::MovInvRandom => t!("Moving Inversions mit Zufallsmustern.", "Moving inversions with random patterns."),
+            TestKind::RandomSequence => t!("Reproduzierbare Zufallsfolge schreiben, prüfen, invertieren.", "Writes, checks and inverts a reproducible random sequence."),
+            TestKind::RandomAccess => t!("Schreibt in zufälliger Reihenfolge. Belastet Speichercontroller und Zeilenwechsel.", "Writes in random order. Stresses the memory controller and row changes."),
+            TestKind::BlockMove => t!("Kopiert große Blöcke (Burst-Transfers) und prüft das Ergebnis.", "Copies large blocks (burst transfers) and checks the result."),
+            TestKind::WalkingBits => t!("Rotierende Einzelbits und Einzelnullen. Findet Datenleitungsfehler.", "Rotating single ones and zeros. Finds data line faults."),
+            TestKind::Modulo20 => t!("Muster an jeder 20. Stelle, Störmuster dazwischen. Findet Nachbareffekte.", "Pattern at every 20th position, noise in between. Finds neighbour effects."),
+            TestKind::Hammer => t!("Liest Adresspaare sehr oft mit Cache-Flush. Kann Bitkipper in Nachbarzeilen auslösen.", "Reads address pairs very often with cache flushes. Can flip bits in neighbouring rows."),
+            TestKind::BitFade => t!("Füllt, wartet und prüft. Findet Zellen, die ihre Ladung verlieren (Refresh).", "Fills, waits and checks. Finds cells that lose their charge (refresh)."),
         }
     }
 

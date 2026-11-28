@@ -7,6 +7,8 @@
 //! out of our control. We only read the values.
 
 use super::{classify_device, Reading, SensorKind, SensorSource};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::Memory::{
     MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, VirtualQuery, FILE_MAP_READ,
@@ -41,24 +43,44 @@ unsafe impl Send for HwinfoSource {}
 
 impl HwinfoSource {
     pub fn new() -> Self {
-        Self { view: None, handle: None, status: "nicht verbunden".into(), retry_in: 0, last_count: 0 }
+        Self {
+            view: None,
+            handle: None,
+            status: t!("nicht verbunden", "not connected").into(),
+            retry_in: 0,
+            last_count: 0,
+        }
     }
 
     fn open(&mut self) {
         let name: Vec<u16> = NAME.encode_utf16().chain(Some(0)).collect();
         let h = unsafe { OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr()) };
         if h.is_null() {
-            self.status = "HWiNFO läuft nicht oder „Shared Memory Support“ ist aus".into();
+            self.status = t!(
+                "HWiNFO läuft nicht oder „Shared Memory Support“ ist aus",
+                "HWiNFO is not running or “Shared Memory Support” is off"
+            )
+            .into();
             return;
         }
         let v = unsafe { MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0) };
         if v.Value.is_null() {
             unsafe { CloseHandle(h) };
-            self.status = "Shared Memory konnte nicht gelesen werden".into();
+            self.status = t!(
+                "Shared Memory konnte nicht gelesen werden",
+                "shared memory could not be read"
+            )
+            .into();
             return;
         }
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
-        unsafe { VirtualQuery(v.Value, &mut mbi, std::mem::size_of::<MEMORY_BASIC_INFORMATION>()) };
+        unsafe {
+            VirtualQuery(
+                v.Value,
+                &mut mbi,
+                std::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+            )
+        };
         self.view = Some((v, mbi.RegionSize));
         self.handle = Some(h);
     }
@@ -80,16 +102,27 @@ impl Drop for HwinfoSource {
 }
 
 fn rd_u32(b: &[u8], o: usize) -> u32 {
-    b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap())).unwrap_or(0)
+    b.get(o..o + 4)
+        .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+        .unwrap_or(0)
 }
 fn rd_f64(b: &[u8], o: usize) -> f64 {
-    b.get(o..o + 8).map(|s| f64::from_le_bytes(s.try_into().unwrap())).unwrap_or(f64::NAN)
+    b.get(o..o + 8)
+        .map(|s| f64::from_le_bytes(s.try_into().unwrap()))
+        .unwrap_or(f64::NAN)
 }
 /// HWiNFO uses the ANSI code page; Latin-1 decoding keeps "°C" intact.
 fn rd_str(b: &[u8], o: usize, len: usize) -> String {
-    let Some(s) = b.get(o..o + len) else { return String::new() };
+    let Some(s) = b.get(o..o + len) else {
+        return String::new();
+    };
     let end = s.iter().position(|&c| c == 0).unwrap_or(len);
-    s[..end].iter().map(|&c| c as char).collect::<String>().trim().to_string()
+    s[..end]
+        .iter()
+        .map(|&c| c as char)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 impl SensorSource for HwinfoSource {
@@ -115,7 +148,7 @@ impl SensorSource for HwinfoSource {
         let (v, size) = self.view.unwrap();
         let mem = unsafe { std::slice::from_raw_parts(v.Value as *const u8, size) };
         if mem.len() < HDR_SIZE || rd_u32(mem, 0) != SIGNATURE_ACTIVE {
-            self.status = "HWiNFO wurde beendet".into();
+            self.status = t!("HWiNFO wurde beendet", "HWiNFO was closed").into();
             self.close();
             self.retry_in = 5;
             return;
@@ -127,15 +160,26 @@ impl SensorSource for HwinfoSource {
         let off_r = rd_u32(mem, 32) as usize;
         let size_r = rd_u32(mem, 36) as usize;
         let num_r = rd_u32(mem, 40) as usize;
-        if size_r < READING_MIN_SIZE || off_r + size_r * num_r > mem.len() || off_s + size_s * num_s > mem.len() {
-            self.status = "Unbekanntes Shared-Memory-Format".into();
+        if size_r < READING_MIN_SIZE
+            || off_r + size_r * num_r > mem.len()
+            || off_s + size_s * num_s > mem.len()
+        {
+            self.status = t!(
+                "Unbekanntes Shared-Memory-Format",
+                "Unknown shared memory format"
+            )
+            .into();
             return;
         }
         let sensor_names: Vec<String> = (0..num_s)
             .map(|i| {
                 let e = &mem[off_s + i * size_s..off_s + (i + 1) * size_s];
                 let user = rd_str(e, SENSOR_NAME_USER, 128);
-                if user.is_empty() { rd_str(e, SENSOR_NAME_ORIG, 128) } else { user }
+                if user.is_empty() {
+                    rd_str(e, SENSOR_NAME_ORIG, 128)
+                } else {
+                    user
+                }
             })
             .collect();
         let start = out.len();
@@ -155,7 +199,11 @@ impl SensorSource for HwinfoSource {
             let si = rd_u32(e, READING_SENSOR_INDEX) as usize;
             let device = sensor_names.get(si).cloned().unwrap_or_default();
             let user = rd_str(e, READING_LABEL_USER, 128);
-            let label = if user.is_empty() { rd_str(e, READING_LABEL_ORIG, 128) } else { user };
+            let label = if user.is_empty() {
+                rd_str(e, READING_LABEL_ORIG, 128)
+            } else {
+                user
+            };
             out.push(Reading {
                 id: format!("hwinfo:{si}:{}", rd_u32(e, READING_ID)),
                 source: "HWiNFO".into(),
@@ -168,6 +216,10 @@ impl SensorSource for HwinfoSource {
             });
         }
         self.last_count = out.len() - start;
-        self.status = format!("verbunden, {} Werte", self.last_count);
+        self.status = tf!(
+            "verbunden, {} Werte",
+            "connected, {} values",
+            self.last_count
+        );
     }
 }

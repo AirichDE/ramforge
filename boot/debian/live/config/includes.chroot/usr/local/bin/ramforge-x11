@@ -1,0 +1,9 @@
+#!/bin/sh
+# X11 client session for the framebuffer fallback (started by xinit).
+# The tiny window manager makes RAMForge fill the screen without a frame.
+LOG=/run/ramforge-session.log
+matchbox-window-manager -use_titlebar no -use_cursor yes >>"$LOG" 2>&1 &
+RUST_BACKTRACE=1 /usr/local/bin/ramforge >>"$LOG" 2>&1
+rc=$?
+echo "[ramforge] RAMForge (X11) beendet mit $rc" >>"$LOG"
+exit $rc

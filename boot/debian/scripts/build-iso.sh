@@ -15,6 +15,15 @@ case "$EDITION" in
     ram) NAME="RAMForge-Boot-RAM-$VERSION.iso" ;;
     *) echo "unbekannte Edition $EDITION"; exit 2 ;;
 esac
+# Kernel: "new" (default since 0.3.1) = bookworm-backports 6.12, Debian-signed
+# for Secure Boot, with current firmware and Mesa: needed for GPUs newer than
+# 6.1, e.g. NVIDIA RTX 40 (nouveau + GSP firmware). "stable" = Debian 12's 6.1,
+# only for comparison builds (file name gets "-Kernel61").
+KERNEL="${RAMFORGE_KERNEL:-new}"
+if [ "$KERNEL" = "stable" ]; then
+    NAME="${NAME%-$VERSION.iso}-Kernel61-$VERSION.iso"
+    W="$W-k61"
+fi
 test -x /out/ramforge-linux || { echo "Fehlt: /out/ramforge-linux (erst build-app.sh)"; exit 1; }
 rm -rf "$W"
 mkdir -p "$W"
@@ -37,6 +46,24 @@ if [ "$EDITION" = "ram" ]; then
     # No network (no update check or news in this variant), no USB/PCI listing tools.
     sed -i -E '/^(ca-certificates|systemd-resolved|usbutils)$/d' config/package-lists/ramforge.list.chroot
 fi
+if [ "$KERNEL" = "new" ]; then
+    mkdir -p config/archives
+    echo "deb http://deb.debian.org/debian bookworm-backports main contrib non-free-firmware"         > config/archives/backports.list.chroot
+    # Only kernel, firmware and the graphics stack come from backports.
+    cat > config/archives/backports.pref.chroot <<'PREF'
+Package: linux-image-* linux-base firmware-* *mesa* libdrm* libgl1* libglx* libegl* libgbm* libglapi* libvulkan* libllvm* libxatracker* libosmesa* libz3-* libclc-*
+Pin: release n=bookworm-backports
+Pin-Priority: 990
+PREF
+    if [ "$EDITION" != "ram" ]; then
+        # Split firmware packages exist only in backports (NVIDIA GSP for RTX 40, Intel GuC/HuC).
+        printf '# GPU firmware (backports split packages)
+firmware-nvidia-graphics
+firmware-intel-graphics
+' >> config/package-lists/ramforge.list.chroot
+    fi
+fi
+echo "$KERNEL" > config/includes.chroot/etc/ramforge-kernel
 echo "$EDITION" > config/includes.chroot/etc/ramforge-edition
 install -D -m0755 /out/ramforge-linux config/includes.chroot/usr/local/bin/ramforge
 install -D -m0644 /src/assets/logo/out/ramforge-icon-256.png config/includes.chroot/usr/local/share/ramforge/logo.png

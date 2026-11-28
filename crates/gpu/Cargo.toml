@@ -12,6 +12,7 @@ default = []
 bench = ["dep:wgpu", "dep:pollster"]
 
 [dependencies]
+ramforge-i18n = { path = "../i18n" }
 serde.workspace = true
 serde_json.workspace = true
 wgpu = { version = "30", optional = true }

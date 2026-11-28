@@ -9,6 +9,9 @@ for k in /usr/lib/modules/*; do
     done
     depmod -a "$(basename "$k")"
 done
-rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
+# Keep the copyright/licence notices of every package (licence obligations).
+find /usr/share/doc -mindepth 1 ! -type d ! -name copyright -delete
+find /usr/share/doc -mindepth 1 -type d -empty -delete
+rm -rf /usr/share/man/* /usr/share/info/*
 find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'de*' ! -name 'en*' ! -name 'locale.alias' -exec rm -rf {} +
 apt-get clean

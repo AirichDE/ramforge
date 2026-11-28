@@ -12,6 +12,8 @@
 //! * Nothing is installed unless one source delivered exactly the signed bytes.
 
 use crate::{verify_digest, Asset, UpdateError};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -78,7 +80,12 @@ impl Fetcher for HttpsFetcher {
                 .headers()
                 .get("location")
                 .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| format!("Weiterleitung {status} ohne Ziel"))?;
+                .ok_or_else(|| {
+                    tf!(
+                        "Weiterleitung {status} ohne Ziel",
+                        "redirect {status} without target"
+                    )
+                })?;
             return Ok(Hop::Redirect(loc.to_string()));
         }
         if !(200..300).contains(&status) {
@@ -107,15 +114,19 @@ fn resolve(base: &str, loc: &str) -> Result<String, String> {
     } else if loc.starts_with('/') {
         let after = base
             .strip_prefix("https://")
-            .ok_or("Basis ist nicht HTTPS")?;
+            .ok_or(t!("Basis ist nicht HTTPS", "base is not HTTPS"))?;
         let host = after.split('/').next().unwrap_or(after);
         format!("https://{host}{loc}")
     } else if loc.contains("://") {
-        return Err(format!(
-            "Weiterleitung auf unsichere Adresse abgelehnt: {loc}"
+        return Err(tf!(
+            "Weiterleitung auf unsichere Adresse abgelehnt: {loc}",
+            "redirect to an insecure address refused: {loc}"
         ));
     } else {
-        return Err(format!("relative Weiterleitung nicht unterstützt: {loc}"));
+        return Err(tf!(
+            "relative Weiterleitung nicht unterstützt: {loc}",
+            "relative redirect not supported: {loc}"
+        ));
     };
     Ok(abs)
 }
@@ -131,7 +142,7 @@ pub fn source_label(url: &str) -> String {
     if h == "github.com" || h.ends_with(".github.com") || h.ends_with("githubusercontent.com") {
         "GitHub".into()
     } else if h == "ramforge.org" || h.ends_with(".ramforge.org") {
-        "Spiegel ramforge.org".into()
+        t!("Spiegel ramforge.org", "mirror ramforge.org").into()
     } else {
         h
     }
@@ -142,7 +153,10 @@ fn open(f: &dyn Fetcher, url: &str) -> Result<(Box<dyn Read + Send>, Option<u64>
     let mut current = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
         if !current.starts_with("https://") {
-            return Err(format!("nur HTTPS erlaubt: {current}"));
+            return Err(tf!(
+                "nur HTTPS erlaubt: {current}",
+                "only HTTPS allowed: {current}"
+            ));
         }
         match f.fetch(&current)? {
             Hop::Body { reader, len } => return Ok((reader, len)),
@@ -150,7 +164,10 @@ fn open(f: &dyn Fetcher, url: &str) -> Result<(Box<dyn Read + Send>, Option<u64>
             Hop::Redirect(loc) => current = resolve(&current, &loc)?,
         }
     }
-    Err(format!("mehr als {MAX_REDIRECTS} Weiterleitungen"))
+    Err(tf!(
+        "mehr als {MAX_REDIRECTS} Weiterleitungen",
+        "more than {MAX_REDIRECTS} redirects"
+    ))
 }
 
 /// Result of a successful download.
@@ -235,7 +252,10 @@ pub fn download_asset(
     for url in &asset.urls {
         let label = source_label(url);
         if !url.starts_with("https://") {
-            errors.push(format!("{label}: keine HTTPS-Adresse"));
+            errors.push(tf!(
+                "{label}: keine HTTPS-Adresse",
+                "{label}: not an HTTPS address"
+            ));
             continue;
         }
         match try_one(f, url, asset, dest, progress, cancel) {

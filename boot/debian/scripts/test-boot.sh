@@ -10,6 +10,7 @@
 #                          disk that RAMForge-USB.exe itself set up on Windows
 #
 # Output: /out/test/<mode>-<seconds>s.ppm, /out/test/<mode>-serial.log
+# Env: ISO=..., VGA=virtio|std, KEY=g (boot menu hotkey), SHOTS="45 150 ..."
 set -euo pipefail
 MODE="${1:-uefi-sb}"
 VERSION="${RAMFORGE_VERSION:-0.3.0}"
@@ -25,7 +26,10 @@ ACCEL=(-accel tcg)
 [ -e /dev/kvm ] && ACCEL=(-accel kvm -cpu host)
 # virtio-vga: KMS driver with PRIME support like real GPUs (QEMU's bochs "std"
 # VGA lacks PRIME import, which wlroots/cage require).
-COMMON=(-m 4096 -smp 4 -vga "${VGA:-virtio}" -display none -no-reboot
+# VGA=ramfb: only a firmware framebuffer, no Linux DRM driver (like a GPU
+# that is newer than the kernel, e.g. RTX 40 on 6.1).
+if [ "${VGA:-virtio}" = "ramfb" ]; then GFX=(-vga none -device ramfb); else GFX=(-vga "${VGA:-virtio}"); fi
+COMMON=(-m 4096 -smp 4 "${GFX[@]}" -display none -no-reboot
         -monitor "unix:$T/mon,server,nowait" -serial "file:$OUT/$MODE-serial.log")
 FW=()
 case "$MODE" in
@@ -75,6 +79,23 @@ fi
 qemu-system-x86_64 "${ACCEL[@]}" "${FW[@]}" "${COMMON[@]}" "${MEDIA[@]}" &
 QPID=$!
 start=$(date +%s)
+# KEY=g presses that key in the boot menu (hotkey of "Grafik-Sicherheitsmodus",
+# i.e. no kernel graphics driver), every 3 s until KEY_UNTIL seconds.
+if [ -n "${KEY:-}" ]; then
+    python3 - "$T/mon" "$KEY" "${KEY_UNTIL:-90}" <<'PY' &
+import socket, sys, time
+until = time.time() + int(sys.argv[3])
+time.sleep(3)
+while time.time() < until:
+    try:
+        s = socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect(sys.argv[1])
+        s.sendall(f"sendkey {sys.argv[2]}
+".encode()); time.sleep(0.3); s.close()
+    except OSError:
+        pass
+    time.sleep(3)
+PY
+fi
 for s in $SHOTS; do
     while [ $(( $(date +%s) - start )) -lt "$s" ]; do
         kill -0 $QPID 2>/dev/null || { echo "QEMU beendet nach $(( $(date +%s) - start )) s"; break 2; }

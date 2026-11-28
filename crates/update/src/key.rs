@@ -16,6 +16,8 @@
 //! array below and publish the new fingerprint on https://ramforge.org.
 //! `cargo test -p ramforge-update -- --ignored` is the release gate.
 
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use sha2::{Digest, Sha256};
 
 /// Release key (2026-11-25), base64 `6X+e5Aj8uH8YW4i0GwYOw9E4DIAjyBiGww28XZBSloo=`
@@ -67,7 +69,7 @@ pub fn fingerprint_of(key: &[u8; 32]) -> String {
 
 fn fp_or_unset(key: &[u8; 32]) -> String {
     if *key == [0; 32] {
-        "nicht hinterlegt".into()
+        t!("nicht hinterlegt", "not set").into()
     } else {
         fingerprint_of(key)
     }
@@ -85,7 +87,7 @@ pub fn emergency_fingerprint() -> String {
 pub fn fingerprints() -> [(&'static str, String); 2] {
     [
         ("Release", release_fingerprint()),
-        ("Notfall", emergency_fingerprint()),
+        (t!("Notfall", "Emergency"), emergency_fingerprint()),
     ]
 }
 

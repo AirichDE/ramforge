@@ -42,7 +42,10 @@ fn usage() -> ExitCode {
 /// Returns the work tree root if `p` lies inside a git working tree.
 fn git_work_tree(p: &Path) -> Option<PathBuf> {
     let abs = std::path::absolute(p).ok()?;
-    abs.ancestors().skip(1).find(|d| d.join(".git").exists()).map(Path::to_path_buf)
+    abs.ancestors()
+        .skip(1)
+        .find(|d| d.join(".git").exists())
+        .map(Path::to_path_buf)
 }
 
 fn fingerprint(pk: &[u8; 32]) -> String {
@@ -54,7 +57,11 @@ fn print_public(pk: &[u8; 32]) {
     println!("Fingerabdruck (SHA-256):         {}", fingerprint(pk));
     let bytes: Vec<String> = pk.iter().map(|b| format!("0x{b:02X}")).collect();
     println!("\nFür crates/update/src/key.rs (RELEASE_KEY oder EMERGENCY_KEY):\n");
-    println!("[\n    {},\n    {},\n]", bytes[..16].join(", "), bytes[16..].join(", "));
+    println!(
+        "[\n    {},\n    {},\n]",
+        bytes[..16].join(", "),
+        bytes[16..].join(", ")
+    );
 }
 
 // ------------------------------------------------------------------ core
@@ -64,7 +71,9 @@ fn print_public(pk: &[u8; 32]) {
 /// Creates a key pair and writes the private key, encrypted, to `out`.
 fn keygen_to(out: &Path, passphrase: &str) -> Result<[u8; 32], String> {
     if passphrase.chars().count() < MIN_PASSPHRASE {
-        return Err(format!("Passphrase zu kurz (mindestens {MIN_PASSPHRASE} Zeichen)"));
+        return Err(format!(
+            "Passphrase zu kurz (mindestens {MIN_PASSPHRASE} Zeichen)"
+        ));
     }
     if let Some(repo) = git_work_tree(out) {
         return Err(format!(
@@ -73,7 +82,10 @@ fn keygen_to(out: &Path, passphrase: &str) -> Result<[u8; 32], String> {
         ));
     }
     if out.exists() {
-        return Err(format!("{} existiert bereits – wird nicht überschrieben", out.display()));
+        return Err(format!(
+            "{} existiert bereits – wird nicht überschrieben",
+            out.display()
+        ));
     }
     // 32 bytes from the operating system's CSPRNG.
     let mut seed = Zeroizing::new([0u8; 32]);
@@ -98,12 +110,15 @@ fn keygen_to(out: &Path, passphrase: &str) -> Result<[u8; 32], String> {
 
 /// Loads and decrypts a private key. Refuses unencrypted key files.
 fn load_key(path: &Path, passphrase: &str) -> Result<SigningKey, String> {
-    let pem = Zeroizing::new(std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?);
+    let pem = Zeroizing::new(
+        std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?,
+    );
     if !pem.contains("BEGIN ENCRYPTED PRIVATE KEY") {
         return Err("Die Schlüsseldatei ist nicht verschlüsselt. Bitte mit `keygen` einen neuen, passwortgeschützten Schlüssel erzeugen.".into());
     }
-    SigningKey::from_pkcs8_encrypted_pem(&pem, passphrase.as_bytes())
-        .map_err(|_| "Entschlüsseln fehlgeschlagen: falsche Passphrase oder beschädigte Datei".to_string())
+    SigningKey::from_pkcs8_encrypted_pem(&pem, passphrase.as_bytes()).map_err(|_| {
+        "Entschlüsseln fehlgeschlagen: falsche Passphrase oder beschädigte Datei".to_string()
+    })
 }
 
 fn sig_path(file: &Path) -> PathBuf {
@@ -115,13 +130,20 @@ fn sig_path(file: &Path) -> PathBuf {
 /// Signs `file`, writes `<file>.sig` (base64 + newline) and self-verifies it.
 fn sign_file(sk: &SigningKey, file: &Path) -> Result<PathBuf, String> {
     let data = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    if file.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+    if file
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+    {
         // Refuse to sign a manifest the app would reject anyway.
-        let m = ramforge_update::parse_unverified(&data).map_err(|e| format!("Manifest ungültig: {e}"))?;
+        let m = ramforge_update::parse_unverified(&data)
+            .map_err(|e| format!("Manifest ungültig: {e}"))?;
         for (name, a) in &m.assets {
             ramforge_update::check_asset(a).map_err(|e| format!("Paket {name}: {e}"))?;
             if !a.urls[0].starts_with("https://github.com/") {
-                eprintln!("Hinweis: Paket {name}: erste Quelle ist nicht GitHub Releases ({})", a.urls[0]);
+                eprintln!(
+                    "Hinweis: Paket {name}: erste Quelle ist nicht GitHub Releases ({})",
+                    a.urls[0]
+                );
             }
             if a.sha256.len() != 64 || !a.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Err(format!("Paket {name}: sha256 fehlt oder ist ungültig"));
@@ -165,22 +187,34 @@ fn hash(path: &Path) -> Result<(), String> {
 // ------------------------------------------------------------- terminal
 
 fn ask(prompt: &str) -> Result<Zeroizing<String>, String> {
-    rpassword::prompt_password(prompt).map(Zeroizing::new).map_err(|e| format!("Passphrase lesen: {e}"))
+    rpassword::prompt_password(prompt)
+        .map(Zeroizing::new)
+        .map_err(|e| format!("Passphrase lesen: {e}"))
 }
 
 fn cmd_keygen(out: &Path) -> Result<(), String> {
     // Check the target before asking, so nobody types a passphrase for nothing.
     if out.exists() {
-        return Err(format!("{} existiert bereits – wird nicht überschrieben", out.display()));
+        return Err(format!(
+            "{} existiert bereits – wird nicht überschrieben",
+            out.display()
+        ));
     }
     if let Some(repo) = git_work_tree(out) {
-        return Err(format!("Ziel liegt in einem Git-Arbeitsverzeichnis ({}). Bitte einen Ort außerhalb wählen.", repo.display()));
+        return Err(format!(
+            "Ziel liegt in einem Git-Arbeitsverzeichnis ({}). Bitte einen Ort außerhalb wählen.",
+            repo.display()
+        ));
     }
     println!("Neue Passphrase (mindestens {MIN_PASSPHRASE} Zeichen, wird nicht angezeigt).");
-    println!("Ohne Passphrase ist der Schlüssel unbrauchbar. Sie lässt sich nicht wiederherstellen.");
+    println!(
+        "Ohne Passphrase ist der Schlüssel unbrauchbar. Sie lässt sich nicht wiederherstellen."
+    );
     let p1 = ask("Passphrase: ")?;
     if p1.chars().count() < MIN_PASSPHRASE {
-        return Err(format!("Passphrase zu kurz (mindestens {MIN_PASSPHRASE} Zeichen)"));
+        return Err(format!(
+            "Passphrase zu kurz (mindestens {MIN_PASSPHRASE} Zeichen)"
+        ));
     }
     let p2 = ask("Passphrase wiederholen: ")?;
     if *p1 != *p2 {
@@ -206,7 +240,12 @@ fn cmd_sign(key: &Path, file: &Path) -> Result<(), String> {
     drop(p);
     let pk = sk.verifying_key().to_bytes();
     let out = sign_file(&sk, file)?;
-    println!("Signiert:  {}\nSignatur:  {}\nSchlüssel: {}", file.display(), out.display(), fingerprint(&pk));
+    println!(
+        "Signiert:  {}\nSignatur:  {}\nSchlüssel: {}",
+        file.display(),
+        out.display(),
+        fingerprint(&pk)
+    );
     let trusted = ramforge_update::key::trusted_keys();
     if !trusted.contains(&pk) {
         println!("ACHTUNG: Dieser Schlüssel ist NICHT in dieser Programmversion hinterlegt. Die App würde die Signatur ablehnen.");
@@ -218,8 +257,12 @@ fn cmd_verify(key_arg: &str, file: &Path) -> Result<(), String> {
     let keys: Vec<[u8; 32]> = if key_arg == "embedded" {
         ramforge_update::key::trusted_keys()
     } else {
-        let raw = B64.decode(key_arg.trim()).map_err(|e| format!("öffentlicher Schlüssel: {e}"))?;
-        vec![raw.try_into().map_err(|_| "Schlüssel muss 32 Byte lang sein".to_string())?]
+        let raw = B64
+            .decode(key_arg.trim())
+            .map_err(|e| format!("öffentlicher Schlüssel: {e}"))?;
+        vec![raw
+            .try_into()
+            .map_err(|_| "Schlüssel muss 32 Byte lang sein".to_string())?]
     };
     if keys.is_empty() {
         return Err("Kein Schlüssel hinterlegt".into());
@@ -255,10 +298,15 @@ mod tests {
 
     /// A fresh directory in the system temp folder, outside any repository.
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("ramforge-sign-test-{}-{name}", std::process::id()));
+        let d =
+            std::env::temp_dir().join(format!("ramforge-sign-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        assert!(git_work_tree(&d.join("x")).is_none(), "Testordner liegt in einem Git-Repo: {}", d.display());
+        assert!(
+            git_work_tree(&d.join("x")).is_none(),
+            "Testordner liegt in einem Git-Repo: {}",
+            d.display()
+        );
         d
     }
 
@@ -271,7 +319,10 @@ mod tests {
         let pk = keygen_to(&key, PASS).unwrap();
 
         let pem = std::fs::read_to_string(&key).unwrap();
-        assert!(pem.starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----"), "nicht verschlüsselt");
+        assert!(
+            pem.starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----"),
+            "nicht verschlüsselt"
+        );
         assert!(!pem.contains("BEGIN PRIVATE KEY"));
 
         // Wrong passphrase fails, right one restores the same key.
@@ -294,7 +345,13 @@ mod tests {
         assert!(ramforge_update::verify_manifest(&json, &sigb, &[[0; 32], pk]).is_ok());
 
         // Tampering after signing is detected.
-        std::fs::write(&manifest, std::fs::read_to_string(&manifest).unwrap().replace("0.2.0", "9.9.9")).unwrap();
+        std::fs::write(
+            &manifest,
+            std::fs::read_to_string(&manifest)
+                .unwrap()
+                .replace("0.2.0", "9.9.9"),
+        )
+        .unwrap();
         assert!(verify_file(&[pk], &manifest).is_err());
         std::fs::remove_dir_all(d).ok();
     }
@@ -324,7 +381,9 @@ mod tests {
         let plain = sk.to_pkcs8_pem(pkcs8::LineEnding::LF).unwrap();
         let p = d.join("plain.pem");
         std::fs::write(&p, plain.as_bytes()).unwrap();
-        assert!(load_key(&p, PASS).unwrap_err().contains("nicht verschlüsselt"));
+        assert!(load_key(&p, PASS)
+            .unwrap_err()
+            .contains("nicht verschlüsselt"));
         std::fs::remove_dir_all(d).ok();
     }
 

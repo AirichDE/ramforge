@@ -8,6 +8,8 @@ use crate::algo::{TestCtx, TestKind};
 use crate::errors::ErrorSink;
 use crate::mem::{self, TestBuffer};
 use crate::rng::{splitmix, time_seed};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
@@ -36,12 +38,17 @@ pub enum Preset {
 }
 
 impl Preset {
-    pub const ALL: [Preset; 4] = [Preset::Quick, Preset::Standard, Preset::Extreme, Preset::BitFade];
+    pub const ALL: [Preset; 4] = [
+        Preset::Quick,
+        Preset::Standard,
+        Preset::Extreme,
+        Preset::BitFade,
+    ];
     pub fn name(self) -> &'static str {
         match self {
-            Preset::Quick => "Schnell",
+            Preset::Quick => t!("Schnell", "Quick"),
             Preset::Standard => "Standard",
-            Preset::Extreme => "Extrem",
+            Preset::Extreme => t!("Extrem", "Extreme"),
             Preset::BitFade => "Bit Fade (Refresh)",
         }
     }
@@ -50,12 +57,27 @@ impl Preset {
         match self {
             Preset::Quick => vec![AddressOwn, MovInvOnesZeros, RandomSequence, RandomAccess],
             Preset::Standard => vec![
-                AddressOwn, MovInvOnesZeros, MovInvWalking8, RandomSequence, RandomAccess,
-                BlockMove, WalkingBits, MovInvRandom,
+                AddressOwn,
+                MovInvOnesZeros,
+                MovInvWalking8,
+                RandomSequence,
+                RandomAccess,
+                BlockMove,
+                WalkingBits,
+                MovInvRandom,
             ],
             Preset::Extreme => vec![
-                AddressOwn, MovInvOnesZeros, MovInvWalking8, MovInvRandom, RandomSequence,
-                RandomAccess, BlockMove, WalkingBits, Modulo20, Hammer, RandomAccess,
+                AddressOwn,
+                MovInvOnesZeros,
+                MovInvWalking8,
+                MovInvRandom,
+                RandomSequence,
+                RandomAccess,
+                BlockMove,
+                WalkingBits,
+                Modulo20,
+                Hammer,
+                RandomAccess,
             ],
             Preset::BitFade => vec![BitFade],
         }
@@ -122,7 +144,11 @@ impl RunStatus {
         if total == 0 {
             return 0.0;
         }
-        let done: u64 = self.progress.iter().map(|p| p.load(Ordering::Relaxed)).sum();
+        let done: u64 = self
+            .progress
+            .iter()
+            .map(|p| p.load(Ordering::Relaxed))
+            .sum();
         (done as f64 / total as f64).min(1.0)
     }
     /// Progress of the current pass, 0..1.
@@ -131,7 +157,10 @@ impl RunStatus {
         (self.test_index.load(Ordering::Relaxed) as f64 + self.test_fraction()) / n
     }
     pub fn current_test(&self) -> Option<TestKind> {
-        self.config.tests.get(self.test_index.load(Ordering::Relaxed)).copied()
+        self.config
+            .tests
+            .get(self.test_index.load(Ordering::Relaxed))
+            .copied()
     }
     pub fn elapsed(&self) -> Duration {
         self.started.elapsed()
@@ -160,7 +189,7 @@ pub fn start(cfg: TestConfig) -> Arc<RunStatus> {
         started_wall: chrono::Local::now(),
         allocated_bytes: AtomicU64::new(0),
         all_locked: AtomicBool::new(true),
-        phase: Mutex::new("Speicher wird reserviert…".into()),
+        phase: Mutex::new(t!("Speicher wird reserviert…", "Allocating memory…").into()),
         phase_log: Mutex::new(Vec::new()),
         summary: Mutex::new(None),
         config: cfg,
@@ -196,7 +225,8 @@ fn coordinate(st: Arc<RunStatus>) {
                     // systems the memory lands next to the core that tests it.
                     let mut buf = match TestBuffer::allocate(per_thread, cfg.lock_memory) {
                         Ok(b) => {
-                            st.allocated_bytes.fetch_add(b.len_bytes() as u64, Ordering::Relaxed);
+                            st.allocated_bytes
+                                .fetch_add(b.len_bytes() as u64, Ordering::Relaxed);
                             if !b.is_locked() {
                                 st.all_locked.store(false, Ordering::Relaxed);
                             }
@@ -232,7 +262,12 @@ fn coordinate(st: Arc<RunStatus>) {
                                     );
                                     st.test_index.store(ti, Ordering::Relaxed);
                                     st.pass.store(pass, Ordering::Relaxed);
-                                    st.set_phase(format!("Durchlauf {} · {}", pass + 1, test.name()));
+                                    st.set_phase(tf!(
+                                        "Durchlauf {} · {}",
+                                        "Pass {} · {}",
+                                        pass + 1,
+                                        test.name()
+                                    ));
                                     st.phase_log.lock().unwrap().push((pass, ti));
                                 }
                             }
@@ -250,9 +285,15 @@ fn coordinate(st: Arc<RunStatus>) {
                                 thread: t,
                                 pass,
                                 test,
-                                seed: splitmix(base_seed ^ ((pass as u64) << 32) ^ (ti as u64) << 8 ^ t as u64),
+                                seed: splitmix(
+                                    base_seed ^ ((pass as u64) << 32) ^ (ti as u64) << 8 ^ t as u64,
+                                ),
                                 base_addr,
-                                fault_index: if t == 0 { slice.len() / 3 / 20 * 20 } else { usize::MAX },
+                                fault_index: if t == 0 {
+                                    slice.len() / 3 / 20 * 20
+                                } else {
+                                    usize::MAX
+                                },
                                 bitfade_secs: cfg.bitfade_secs,
                             };
                             test.run(slice, &ctx);
@@ -282,11 +323,24 @@ fn coordinate(st: Arc<RunStatus>) {
     let (outcome, message) = if let Some(e) = failed {
         (Outcome::Aborted, e)
     } else if errors > 0 {
-        (Outcome::Failed, format!("{errors} Fehler gefunden"))
+        (
+            Outcome::Failed,
+            tf!("{errors} Fehler gefunden", "{errors} errors found"),
+        )
     } else if st.cancel.load(Ordering::Relaxed) {
-        (Outcome::Cancelled, "Vom Benutzer abgebrochen, bis dahin keine Fehler".into())
+        (
+            Outcome::Cancelled,
+            t!(
+                "Vom Benutzer abgebrochen, bis dahin keine Fehler",
+                "Cancelled by the user, no errors up to then"
+            )
+            .into(),
+        )
     } else {
-        (Outcome::Passed, "Keine Fehler gefunden".into())
+        (
+            Outcome::Passed,
+            t!("Keine Fehler gefunden", "No errors found").into(),
+        )
     };
     let summary = RunSummary {
         outcome,
@@ -352,7 +406,10 @@ mod tests {
             assert!(t.elapsed() < Duration::from_secs(10), "cancel too slow");
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert_eq!(st.summary.lock().unwrap().as_ref().unwrap().outcome, Outcome::Cancelled);
+        assert_eq!(
+            st.summary.lock().unwrap().as_ref().unwrap().outcome,
+            Outcome::Cancelled
+        );
     }
 }
 
@@ -362,7 +419,11 @@ mod phase_tests {
 
     #[test]
     fn every_test_start_is_logged_in_order() {
-        let tests = vec![TestKind::AddressOwn, TestKind::MovInvOnesZeros, TestKind::RandomSequence];
+        let tests = vec![
+            TestKind::AddressOwn,
+            TestKind::MovInvOnesZeros,
+            TestKind::RandomSequence,
+        ];
         let st = start(TestConfig {
             tests: tests.clone(),
             passes: 2,

@@ -5,6 +5,8 @@
 //! start the new EXE, exit. The next start deletes `RAMForge.exe.old`.
 
 use crate::UpdateError;
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use std::path::{Path, PathBuf};
 
 fn sibling(exe: &Path, suffix: &str) -> PathBuf {
@@ -58,16 +60,28 @@ pub fn install_and_restart(new_file: &Path) -> Result<(), UpdateError> {
     let exe = current_exe()?;
     let old = sibling(&exe, ".old");
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(&exe, &old)
-        .map_err(|e| UpdateError::Io(format!("alte Version umbenennen: {e}")))?;
+    std::fs::rename(&exe, &old).map_err(|e| {
+        UpdateError::Io(tf!(
+            "alte Version umbenennen: {e}",
+            "renaming old version: {e}"
+        ))
+    })?;
     if let Err(e) = std::fs::rename(new_file, &exe) {
         // Roll back, so the user keeps a working EXE.
         let _ = std::fs::rename(&old, &exe);
-        return Err(UpdateError::Io(format!("neue Version einsetzen: {e}")));
+        return Err(UpdateError::Io(tf!(
+            "neue Version einsetzen: {e}",
+            "installing new version: {e}"
+        )));
     }
     std::process::Command::new(&exe)
         .arg("--updated")
         .spawn()
-        .map_err(|e| UpdateError::Io(format!("neue Version starten: {e}")))?;
+        .map_err(|e| {
+            UpdateError::Io(tf!(
+                "neue Version starten: {e}",
+                "starting new version: {e}"
+            ))
+        })?;
     Ok(())
 }

@@ -5,6 +5,8 @@
 //! (see docs/roadmap.md); until then HWiNFO's shared memory fills the gap.
 
 use super::{Reading, SensorGroup, SensorKind, SensorSource};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use windows_sys::Wdk::System::SystemInformation::NtQuerySystemInformation;
 use windows_sys::Win32::System::Performance::*;
 use windows_sys::Win32::System::Power::CallNtPowerInformation;
@@ -55,7 +57,9 @@ unsafe impl Send for BuiltinSource {}
 
 impl BuiltinSource {
     pub fn new() -> Self {
-        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         let mut s = Self {
             cores,
             last: Vec::new(),
@@ -125,15 +129,31 @@ impl BuiltinSource {
                 let busy = (total - idle).max(0);
                 busy_all += busy;
                 total_all += total;
-                per_core.push(if total > 0 { busy as f64 * 100.0 / total as f64 } else { 0.0 });
+                per_core.push(if total > 0 {
+                    busy as f64 * 100.0 / total as f64
+                } else {
+                    0.0
+                });
             }
-            let total = if total_all > 0 { busy_all as f64 * 100.0 / total_all as f64 } else { 0.0 };
-            out.push(reading("cpu/load", SensorGroup::Cpu, "CPU", "Auslastung gesamt", SensorKind::Load, total, "%"));
+            let total = if total_all > 0 {
+                busy_all as f64 * 100.0 / total_all as f64
+            } else {
+                0.0
+            };
+            out.push(reading(
+                "cpu/load",
+                SensorGroup::Cpu,
+                "CPU",
+                t!("Auslastung gesamt", "Total load"),
+                SensorKind::Load,
+                total,
+                "%",
+            ));
             out.push(reading(
                 "cpu/load_max",
                 SensorGroup::Cpu,
                 "CPU",
-                "Auslastung höchster Thread",
+                t!("Auslastung höchster Thread", "Load of busiest thread"),
                 SensorKind::Load,
                 per_core.iter().cloned().fold(0.0, f64::max),
                 "%",
@@ -143,7 +163,7 @@ impl BuiltinSource {
                     &format!("cpu/load/{i}"),
                     SensorGroup::Cpu,
                     "CPU",
-                    &format!("Thread {i} Auslastung"),
+                    &tf!("Thread {i} Auslastung", "Thread {i} load"),
                     SensorKind::Load,
                     v,
                     "%",
@@ -167,18 +187,34 @@ impl BuiltinSource {
                     && self.max_mhz > 0
                 {
                     let mhz = v.Anonymous.doubleValue / 100.0 * self.max_mhz as f64;
-                    out.push(reading("cpu/clock", SensorGroup::Cpu, "CPU", "Effektiver Takt (Mittel)", SensorKind::Clock, mhz, "MHz"));
+                    out.push(reading(
+                        "cpu/clock",
+                        SensorGroup::Cpu,
+                        "CPU",
+                        t!("Effektiver Takt (Mittel)", "Effective clock (avg)"),
+                        SensorKind::Clock,
+                        mhz,
+                        "MHz",
+                    ));
                 }
             }
             if let Some(c) = self.thermal_counter {
                 let mut size = 0u32;
                 let mut count = 0u32;
-                let r = PdhGetFormattedCounterArrayW(c, PDH_FMT_DOUBLE, &mut size, &mut count, std::ptr::null_mut());
+                let r = PdhGetFormattedCounterArrayW(
+                    c,
+                    PDH_FMT_DOUBLE,
+                    &mut size,
+                    &mut count,
+                    std::ptr::null_mut(),
+                );
                 if r == PDH_MORE_DATA && size > 0 {
                     // Buffer must be 8-byte aligned for the item structs.
                     let mut buf = vec![0u64; (size as usize).div_ceil(8)];
                     let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
-                    if PdhGetFormattedCounterArrayW(c, PDH_FMT_DOUBLE, &mut size, &mut count, items) == 0 {
+                    if PdhGetFormattedCounterArrayW(c, PDH_FMT_DOUBLE, &mut size, &mut count, items)
+                        == 0
+                    {
                         for i in 0..count as usize {
                             let it = &*items.add(i);
                             let name = wstr(it.szName);
@@ -188,7 +224,7 @@ impl BuiltinSource {
                                     &format!("acpi/{name}"),
                                     SensorGroup::Mainboard,
                                     "ACPI",
-                                    &format!("Thermalzone {name}"),
+                                    &tf!("Thermalzone {name}", "Thermal zone {name}"),
                                     SensorKind::Temperature,
                                     kelvin - 273.15,
                                     "°C",
@@ -208,11 +244,43 @@ impl BuiltinSource {
             return;
         }
         let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
-        out.push(reading("mem/used", SensorGroup::Memory, "RAM", "Belegt", SensorKind::Other, gib(s.ullTotalPhys - s.ullAvailPhys), "GiB"));
-        out.push(reading("mem/avail", SensorGroup::Memory, "RAM", "Frei", SensorKind::Other, gib(s.ullAvailPhys), "GiB"));
-        out.push(reading("mem/load", SensorGroup::Memory, "RAM", "Auslastung", SensorKind::Load, s.dwMemoryLoad as f64, "%"));
+        out.push(reading(
+            "mem/used",
+            SensorGroup::Memory,
+            "RAM",
+            t!("Belegt", "Used"),
+            SensorKind::Other,
+            gib(s.ullTotalPhys - s.ullAvailPhys),
+            "GiB",
+        ));
+        out.push(reading(
+            "mem/avail",
+            SensorGroup::Memory,
+            "RAM",
+            t!("Frei", "Free"),
+            SensorKind::Other,
+            gib(s.ullAvailPhys),
+            "GiB",
+        ));
+        out.push(reading(
+            "mem/load",
+            SensorGroup::Memory,
+            "RAM",
+            t!("Auslastung", "Load"),
+            SensorKind::Load,
+            s.dwMemoryLoad as f64,
+            "%",
+        ));
         let commit_used = s.ullTotalPageFile.saturating_sub(s.ullAvailPageFile);
-        out.push(reading("mem/commit", SensorGroup::Memory, "RAM", "Zugesichert (Commit)", SensorKind::Other, gib(commit_used), "GiB"));
+        out.push(reading(
+            "mem/commit",
+            SensorGroup::Memory,
+            "RAM",
+            t!("Zugesichert (Commit)", "Committed"),
+            SensorKind::Other,
+            gib(commit_used),
+            "GiB",
+        ));
     }
 }
 
@@ -241,7 +309,15 @@ unsafe fn wstr(p: *const u16) -> String {
     String::from_utf16_lossy(std::slice::from_raw_parts(p, n))
 }
 
-fn reading(id: &str, group: SensorGroup, device: &str, label: &str, kind: SensorKind, value: f64, unit: &str) -> Reading {
+fn reading(
+    id: &str,
+    group: SensorGroup,
+    device: &str,
+    label: &str,
+    kind: SensorKind,
+    value: f64,
+    unit: &str,
+) -> Reading {
     Reading {
         id: format!("win/{id}"),
         source: "Windows".into(),
@@ -256,10 +332,10 @@ fn reading(id: &str, group: SensorGroup, device: &str, label: &str, kind: Sensor
 
 impl SensorSource for BuiltinSource {
     fn name(&self) -> &str {
-        "Windows (integriert)"
+        t!("Windows (integriert)", "Windows (built-in)")
     }
     fn status(&self) -> String {
-        format!("aktiv, {} Werte", self.values)
+        tf!("aktiv, {} Werte", "active, {} values", self.values)
     }
     fn poll(&mut self, out: &mut Vec<Reading>) {
         let before = out.len();

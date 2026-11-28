@@ -13,6 +13,8 @@
 //!   (offline signing key backup) – such a stick is refused, full stop
 //! * the user has to type LÖSCHEN; the disk number is re-verified by serial
 
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -65,7 +67,10 @@ fn powershell(script: &str) -> Result<String, String> {
 pub fn disk_for_letter(letter: &str) -> Result<DiskInfo, String> {
     let l = letter.trim_end_matches(['\\', ':']);
     if l.len() != 1 || !l.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(format!("ungültiger Laufwerksbuchstabe {letter}"));
+        return Err(tf!(
+            "ungültiger Laufwerksbuchstabe {letter}",
+            "invalid drive letter {letter}"
+        ));
     }
     let script = format!(
         "$d = Get-Partition -DriveLetter {l} -ErrorAction Stop | Get-Disk; \
@@ -74,7 +79,8 @@ pub fn disk_for_letter(letter: &str) -> Result<DiskInfo, String> {
            Size=[uint64]$d.Size; IsSystem=[bool]$d.IsSystem; IsBoot=[bool]$d.IsBoot; Letters=$letters }} | ConvertTo-Json -Compress"
     );
     let json = powershell(&script)?;
-    serde_json::from_str(&json).map_err(|e| format!("Datenträgerinfo: {e}: {json}"))
+    serde_json::from_str(&json)
+        .map_err(|e| tf!("Datenträgerinfo: {e}: {json}", "Disk info: {e}: {json}"))
 }
 
 pub fn disk_by_number(n: u32) -> Result<DiskInfo, String> {
@@ -85,27 +91,34 @@ pub fn disk_by_number(n: u32) -> Result<DiskInfo, String> {
            Size=[uint64]$d.Size; IsSystem=[bool]$d.IsSystem; IsBoot=[bool]$d.IsBoot; Letters=$letters }} | ConvertTo-Json -Compress"
     );
     let json = powershell(&script)?;
-    serde_json::from_str(&json).map_err(|e| format!("Datenträgerinfo: {e}: {json}"))
+    serde_json::from_str(&json)
+        .map_err(|e| tf!("Datenträgerinfo: {e}: {json}", "Disk info: {e}: {json}"))
 }
 
 /// Why this disk must not be erased, or None if it may be.
 pub fn refusal(d: &DiskInfo, allow_virtual: bool) -> Option<String> {
     if d.is_system || d.is_boot {
-        return Some("System- oder Startdatenträger von Windows – wird nie gelöscht.".into());
+        return Some(
+            t!(
+                "System- oder Startdatenträger von Windows – wird nie gelöscht.",
+                "Windows system or boot disk – never erased."
+            )
+            .into(),
+        );
     }
     let bus = d.bus_type.to_ascii_lowercase();
     let virtual_ok = allow_virtual && (bus.contains("virtual") || bus == "file backed virtual");
     if bus != "usb" && !virtual_ok {
-        return Some(format!(
+        return Some(tf!(
             "Kein USB-Datenträger (Bus: {}). Nur USB-Sticks werden eingerichtet.",
+            "Not a USB disk (bus: {}). Only USB sticks are set up.",
             d.bus_type
         ));
     }
     for l in &d.letters {
         // Existence check only: the folder's content is never listed or read.
         if Path::new(&format!("{l}:\\{KEY_FOLDER}")).exists() {
-            return Some(format!(
-                "Auf {l}: liegt der Ordner {KEY_FOLDER} (Schlüssel-Sicherung). Dieser Datenträger wird nie gelöscht."
+            return Some(tf!("Auf {l}: liegt der Ordner {KEY_FOLDER} (Schlüssel-Sicherung). Dieser Datenträger wird nie gelöscht.", "{l}: holds the folder {KEY_FOLDER} (key backup). This disk is never erased."
             ));
         }
     }
@@ -117,12 +130,18 @@ pub fn refusal(d: &DiskInfo, allow_virtual: bool) -> Option<String> {
             .map(|c| c.to_ascii_uppercase().to_string());
         if let Some(drive) = drive {
             if d.letters.iter().any(|l| l.eq_ignore_ascii_case(&drive)) {
-                return Some("RAMForge-USB läuft von diesem Datenträger. Bitte von einem anderen Laufwerk starten.".into());
+                return Some(t!("RAMForge-USB läuft von diesem Datenträger. Bitte von einem anderen Laufwerk starten.", "RAMForge-USB is running from this disk. Please start it from another drive.").into());
             }
         }
     }
     if d.size < 1_500_000_000 {
-        return Some("Zu klein: mindestens 2 GB nötig.".into());
+        return Some(
+            t!(
+                "Zu klein: mindestens 2 GB nötig.",
+                "Too small: at least 2 GB needed."
+            )
+            .into(),
+        );
     }
     None
 }
@@ -206,13 +225,19 @@ pub fn iso_version(iso: &Path) -> String {
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    n.trim_start_matches("RAMForge-Boot-")
-        .trim_start_matches("ramforge-boot-")
-        .trim_start_matches("Kompakt-")
-        .trim_start_matches("kompakt-")
-        .trim_start_matches("RAM-")
-        .trim_start_matches("ram-")
-        .to_string()
+    clean_version(&n)
+}
+
+/// The version part of a name: the first "-"-separated part that starts with
+/// a digit and contains a dot, plus everything after it.
+/// "RAMForge-Boot-Kernel612-0.3.1" → "0.3.1", "Kernel612-0.3.0" → "0.3.0".
+pub fn clean_version(s: &str) -> String {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts
+        .iter()
+        .position(|p| p.starts_with(|c: char| c.is_ascii_digit()) && p.contains('.'))
+        .map(|i| parts[i..].join("-"))
+        .unwrap_or_else(|| s.to_string())
 }
 
 pub fn sha256_file(p: &Path, progress: &dyn Fn(u64)) -> Result<String, String> {
@@ -241,8 +266,9 @@ pub fn verify_iso(iso: &Path, progress: &dyn Fn(u64)) -> Result<bool, String> {
     let want = text.split_whitespace().next().unwrap_or("").to_lowercase();
     let got = sha256_file(iso, progress)?;
     if got != want {
-        return Err(format!(
+        return Err(tf!(
             "Prüfsumme der ISO stimmt nicht ({}). Datei neu herunterladen.",
+            "The ISO checksum does not match ({}). Download the file again.",
             side.display()
         ));
     }
@@ -258,7 +284,10 @@ fn mount_iso(iso: &Path) -> Result<String, String> {
     ))?;
     let l = l.trim();
     if l.len() != 1 {
-        return Err(format!("ISO konnte nicht eingebunden werden ({l})"));
+        return Err(tf!(
+            "ISO konnte nicht eingebunden werden ({l})",
+            "The ISO could not be mounted ({l})"
+        ));
     }
     Ok(format!("{l}:\\"))
 }
@@ -289,8 +318,9 @@ fn partition_and_format(n: u32, size: u64) -> Result<String, String> {
     let _ = std::fs::remove_file(&path);
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     if !out.status.success() {
-        return Err(format!(
-            "diskpart fehlgeschlagen (Administratorrechte?):\n{text}"
+        return Err(tf!(
+            "diskpart fehlgeschlagen (Administratorrechte?):\n{text}",
+            "diskpart failed (administrator rights?):\n{text}"
         ));
     }
     // Windows needs a moment to mount the new volume.
@@ -305,7 +335,11 @@ fn partition_and_format(n: u32, size: u64) -> Result<String, String> {
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    Err("Die neue Partition hat keinen Laufwerksbuchstaben bekommen".into())
+    Err(t!(
+        "Die neue Partition hat keinen Laufwerksbuchstaben bekommen",
+        "The new partition did not get a drive letter"
+    )
+    .into())
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
@@ -327,7 +361,7 @@ fn copy_tree(
     progress: &dyn Fn(u64, u64, &str),
 ) -> Result<u64, String> {
     let mut files = Vec::new();
-    walk(src_root, &mut files).map_err(|e| format!("ISO lesen: {e}"))?;
+    walk(src_root, &mut files).map_err(|e| tf!("ISO lesen: {e}", "reading ISO: {e}"))?;
     let total: u64 = files
         .iter()
         .filter_map(|f| f.metadata().ok())
@@ -368,7 +402,7 @@ fn verify_copy(src_root: &Path, dst_root: &Path) -> Result<(), String> {
     let a = sha256_file(&src_root.join(&rel), &|_| {})?;
     let b = sha256_file(&dst_root.join(&rel), &|_| {})?;
     if a != b {
-        return Err("Prüfung nach dem Kopieren fehlgeschlagen: live/filesystem.squashfs weicht ab (Stick defekt?)".into());
+        return Err(t!("Prüfung nach dem Kopieren fehlgeschlagen: live/filesystem.squashfs weicht ab (Stick defekt?)", "Check after copying failed: live/filesystem.squashfs differs (faulty stick?)").into());
     }
     if !dst_root
         .join("EFI")
@@ -376,7 +410,11 @@ fn verify_copy(src_root: &Path, dst_root: &Path) -> Result<(), String> {
         .join("bootx64.efi")
         .exists()
     {
-        return Err("EFI/boot/bootx64.efi fehlt nach dem Kopieren".into());
+        return Err(t!(
+            "EFI/boot/bootx64.efi fehlt nach dem Kopieren",
+            "EFI/boot/bootx64.efi missing after copying"
+        )
+        .into());
     }
     Ok(())
 }
@@ -399,15 +437,19 @@ pub fn setup(i: &SetupInput, progress: &dyn Fn(f32, &str)) -> Result<String, Str
     // Fresh checks right before erasing: the stick could have been swapped.
     let d = disk_by_number(i.disk)?;
     if d.serial_number != i.expect_serial || d.size != i.expect_size {
-        return Err(
-            "Der Datenträger hat sich seit der Bestätigung geändert. Abgebrochen, nichts gelöscht."
-                .into(),
-        );
+        return Err(t!(
+            "Der Datenträger hat sich seit der Bestätigung geändert. Abgebrochen, nichts gelöscht.",
+            "The disk changed since the confirmation. Cancelled, nothing erased."
+        )
+        .into());
     }
     if let Some(why) = refusal(&d, i.allow_virtual) {
-        return Err(format!("Abgebrochen, nichts gelöscht: {why}"));
+        return Err(tf!(
+            "Abgebrochen, nichts gelöscht: {why}",
+            "Cancelled, nothing erased: {why}"
+        ));
     }
-    progress(0.02, "ISO wird geprüft …");
+    progress(0.02, t!("ISO wird geprüft …", "Checking ISO …"));
     let iso_len = std::fs::metadata(i.iso)
         .map(|m| m.len())
         .unwrap_or(1)
@@ -415,12 +457,18 @@ pub fn setup(i: &SetupInput, progress: &dyn Fn(f32, &str)) -> Result<String, Str
     verify_iso(i.iso, &|done| {
         progress(
             0.02 + 0.08 * done as f32 / iso_len as f32,
-            "ISO wird geprüft …",
+            t!("ISO wird geprüft …", "Checking ISO …"),
         )
     })?;
-    progress(0.10, "Stick wird gelöscht und mit FAT32 formatiert …");
+    progress(
+        0.10,
+        t!(
+            "Stick wird gelöscht und mit FAT32 formatiert …",
+            "Erasing the stick and formatting it with FAT32 …"
+        ),
+    );
     let root = partition_and_format(i.disk, d.size)?;
-    progress(0.15, "ISO wird eingebunden …");
+    progress(0.15, t!("ISO wird eingebunden …", "Mounting ISO …"));
     let iso_root = mount_iso(i.iso)?;
     let res = (|| {
         copy_tree(
@@ -429,16 +477,22 @@ pub fn setup(i: &SetupInput, progress: &dyn Fn(f32, &str)) -> Result<String, Str
             &|done, total, name| {
                 progress(
                     0.15 + 0.7 * done as f32 / total.max(1) as f32,
-                    &format!("Kopiere {name}"),
+                    &tf!("Kopiere {name}", "Copying {name}"),
                 )
             },
         )?;
-        progress(0.86, "Kopie wird geprüft …");
+        progress(0.86, t!("Kopie wird geprüft …", "Checking the copy …"));
         verify_copy(Path::new(&iso_root), Path::new(&root))
     })();
     unmount_iso(i.iso);
     res?;
-    progress(0.95, "Windows-Programme und Kennung …");
+    progress(
+        0.95,
+        t!(
+            "Windows-Programme und Kennung …",
+            "Windows programs and marker …"
+        ),
+    );
     let rf = Path::new(&root).join("RAMForge");
     std::fs::create_dir_all(rf.join("RAMForge-data")).map_err(|e| e.to_string())?;
     std::fs::copy(i.main_exe, rf.join("RAMForge.exe")).map_err(|e| format!("RAMForge.exe: {e}"))?;
@@ -459,7 +513,7 @@ pub fn setup(i: &SetupInput, progress: &dyn Fn(f32, &str)) -> Result<String, Str
         serde_json::to_string_pretty(&marker).unwrap_or_default(),
     )
     .map_err(|e| e.to_string())?;
-    progress(1.0, "Fertig");
+    progress(1.0, t!("Fertig", "Done"));
     Ok(root)
 }
 
@@ -492,7 +546,7 @@ pub fn update_in_place(
         copy_tree(Path::new(&iso_root), root, &|done, total, name| {
             progress(
                 done as f32 / total.max(1) as f32 * 0.9,
-                &format!("Kopiere {name}"),
+                &tf!("Kopiere {name}", "Copying {name}"),
             )
         })?;
         verify_copy(Path::new(&iso_root), root)
@@ -503,7 +557,7 @@ pub fn update_in_place(
     let m = serde_json::json!({"version": iso_version(iso), "edition": "boot", "installed": chrono::Local::now().format("%Y-%m-%d").to_string()});
     std::fs::write(marker, serde_json::to_string_pretty(&m).unwrap_or_default())
         .map_err(|e| e.to_string())?;
-    progress(1.0, "Fertig");
+    progress(1.0, t!("Fertig", "Done"));
     Ok(())
 }
 
@@ -530,6 +584,7 @@ mod tests {
             ("RAMForge-Boot-0.3.0.iso", Variant::Voll, "0.3.0"),
             ("RAMForge-Boot-Kompakt-0.3.0.iso", Variant::Kompakt, "0.3.0"),
             ("RAMForge-Boot-RAM-0.3.0.iso", Variant::Ram, "0.3.0"),
+            ("RAMForge-Boot-Kernel612-0.3.1.iso", Variant::Voll, "0.3.1"),
         ] {
             assert_eq!(variant_of(Path::new(name)), v, "{name}");
             assert_eq!(iso_version(Path::new(name)), ver, "{name}");

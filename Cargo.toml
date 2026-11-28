@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/hw", "apps/ramforge", "crates/update", "apps/ramforge-usb", "tools/ramforge-sign", "crates/gpu", "apps/ramforge-gpu"]
+members = ["crates/i18n", "crates/core", "crates/hw", "apps/ramforge", "crates/update", "apps/ramforge-usb", "tools/ramforge-sign", "crates/gpu", "apps/ramforge-gpu"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/airichde/ramforge"

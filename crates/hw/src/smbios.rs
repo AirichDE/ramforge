@@ -4,6 +4,8 @@
 //! this table. On Windows it is read with GetSystemFirmwareTable('RSMB'), on
 //! Linux from /sys/firmware/dmi/tables. No driver and no admin rights needed.
 
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -77,13 +79,19 @@ impl<'a> Structure<'a> {
         self.data.get(off).copied()
     }
     fn word(&self, off: usize) -> Option<u16> {
-        Some(u16::from_le_bytes(self.data.get(off..off + 2)?.try_into().ok()?))
+        Some(u16::from_le_bytes(
+            self.data.get(off..off + 2)?.try_into().ok()?,
+        ))
     }
     fn dword(&self, off: usize) -> Option<u32> {
-        Some(u32::from_le_bytes(self.data.get(off..off + 4)?.try_into().ok()?))
+        Some(u32::from_le_bytes(
+            self.data.get(off..off + 4)?.try_into().ok()?,
+        ))
     }
     fn qword(&self, off: usize) -> Option<u64> {
-        Some(u64::from_le_bytes(self.data.get(off..off + 8)?.try_into().ok()?))
+        Some(u64::from_le_bytes(
+            self.data.get(off..off + 8)?.try_into().ok()?,
+        ))
     }
     fn string(&self, off: usize) -> String {
         let idx = self.byte(off).unwrap_or(0) as usize;
@@ -126,7 +134,11 @@ fn structures(table: &[u8]) -> Vec<Structure<'_>> {
                 }
             }
         }
-        out.push(Structure { kind, data, strings });
+        out.push(Structure {
+            kind,
+            data,
+            strings,
+        });
         if kind == 127 {
             break; // end-of-table
         }
@@ -148,8 +160,8 @@ fn memory_type_name(t: u8) -> String {
         0x1E => "LPDDR4",
         0x22 => "DDR5",
         0x23 => "LPDDR5",
-        0x02 => "Unbekannt",
-        _ => return format!("Typ 0x{t:02X}"),
+        0x02 => t!("Unbekannt", "Unknown"),
+        _ => return tf!("Typ 0x{t:02X}", "Type 0x{t:02X}"),
     }
     .to_string()
 }
@@ -168,7 +180,10 @@ fn form_factor_name(f: u8) -> String {
 }
 
 pub fn parse(table: &[u8], major: u8, minor: u8) -> SmbiosInfo {
-    let mut info = SmbiosInfo { version: format!("{major}.{minor}"), ..Default::default() };
+    let mut info = SmbiosInfo {
+        version: format!("{major}.{minor}"),
+        ..Default::default()
+    };
     for s in structures(table) {
         match s.kind {
             0 => {
@@ -249,7 +264,7 @@ fn parse_memory_device(s: &Structure) -> MemoryDevice {
         form_factor: form_factor_name(s.byte(0x0E).unwrap_or(2)),
         speed_mts: speed,
         configured_speed_mts: conf,
-        manufacturer: s.string(0x17),
+        manufacturer: module_manufacturer(&s.string(0x17), &s.string(0x1A)),
         part_number: s.string(0x1A),
         serial: s.string(0x18),
         ranks: s.byte(0x1B).unwrap_or(0) & 0x0F,
@@ -275,12 +290,20 @@ mod sys {
         const RSMB: u32 = u32::from_be_bytes(*b"RSMB");
         let size = unsafe { GetSystemFirmwareTable(RSMB, 0, std::ptr::null_mut(), 0) };
         if size < 8 {
-            return Err("SMBIOS-Tabelle nicht verfügbar".into());
+            return Err(ramforge_i18n::t!(
+                "SMBIOS-Tabelle nicht verfügbar",
+                "SMBIOS table not available"
+            )
+            .into());
         }
         let mut buf = vec![0u8; size as usize];
         let got = unsafe { GetSystemFirmwareTable(RSMB, 0, buf.as_mut_ptr() as *mut _, size) };
         if got < 8 {
-            return Err("SMBIOS-Tabelle konnte nicht gelesen werden".into());
+            return Err(ramforge_i18n::t!(
+                "SMBIOS-Tabelle konnte nicht gelesen werden",
+                "SMBIOS table could not be read"
+            )
+            .into());
         }
         // RawSMBIOSData: u8 calling method, u8 major, u8 minor, u8 dmi rev, u32 length, data
         let (major, minor) = (buf[1], buf[2]);
@@ -293,8 +316,12 @@ mod sys {
 #[cfg(unix)]
 mod sys {
     pub fn raw_table() -> Result<(Vec<u8>, u8, u8), String> {
-        let table = std::fs::read("/sys/firmware/dmi/tables/DMI")
-            .map_err(|e| format!("DMI-Tabelle nicht lesbar: {e}"))?;
+        let table = std::fs::read("/sys/firmware/dmi/tables/DMI").map_err(|e| {
+            ramforge_i18n::tf!(
+                "DMI-Tabelle nicht lesbar: {e}",
+                "DMI table not readable: {e}"
+            )
+        })?;
         let ep = std::fs::read("/sys/firmware/dmi/tables/smbios_entry_point").unwrap_or_default();
         let (major, minor) = if ep.starts_with(b"_SM3_") && ep.len() > 8 {
             (ep[7], ep[8])
@@ -348,5 +375,104 @@ mod tests {
         assert_eq!(m.configured_voltage_mv, 1250);
         assert_eq!(m.ranks, 2);
         assert!(m.has_ecc());
+    }
+}
+
+/// Module manufacturer as shown to the user. Many boards leave the SMBIOS
+/// field empty, write "Unknown" or a raw JEDEC code ("04CD", "CD04"): then
+/// the JEDEC code is decoded, or the vendor is derived from the part number.
+pub fn module_manufacturer(raw: &str, part: &str) -> String {
+    let r = raw.trim();
+    let placeholder = r.is_empty()
+        || r.eq_ignore_ascii_case("unknown")
+        || r.eq_ignore_ascii_case("undefined")
+        || r.eq_ignore_ascii_case("not specified")
+        || r.chars().all(|c| c == '0' || c == 'F' || c == 'f');
+    // Raw JEDEC code: 4 hex digits, continuation count + ID or ID + count.
+    if r.len() == 4 && r.chars().all(|c| c.is_ascii_hexdigit()) {
+        let a = u8::from_str_radix(&r[0..2], 16).unwrap_or(0);
+        let b = u8::from_str_radix(&r[2..4], 16).unwrap_or(0);
+        for (cont, id) in [(a, b), (b, a)] {
+            if cont < 0x10 {
+                let n = crate::spd::jep106(cont, id);
+                if !n.is_empty() && !n.starts_with("JEP106") {
+                    return n;
+                }
+            }
+        }
+    }
+    if !placeholder {
+        return r.to_string();
+    }
+    vendor_from_part(part)
+        .map(str::to_string)
+        .unwrap_or_else(|| r.to_string())
+}
+
+/// Vendor from well-known part number prefixes.
+pub fn vendor_from_part(part: &str) -> Option<&'static str> {
+    let p = part.trim().to_ascii_uppercase();
+    const PREFIXES: &[(&str, &str)] = &[
+        ("F3-", "G.Skill"),
+        ("F4-", "G.Skill"),
+        ("F5-", "G.Skill"),
+        ("CMK", "Corsair"),
+        ("CMW", "Corsair"),
+        ("CMT", "Corsair"),
+        ("CMH", "Corsair"),
+        ("CMR", "Corsair"),
+        ("CMD", "Corsair"),
+        ("CMSX", "Corsair"),
+        ("CMSO", "Corsair"),
+        ("CMG", "Corsair"),
+        ("KF", "Kingston"),
+        ("KHX", "Kingston"),
+        ("KVR", "Kingston"),
+        ("KCP", "Kingston"),
+        ("ACR", "Kingston"),
+        ("BLS", "Crucial"),
+        ("BL", "Crucial"),
+        ("CT", "Crucial"),
+        ("MTA", "Micron"),
+        ("MT", "Micron"),
+        ("M378", "Samsung"),
+        ("M471", "Samsung"),
+        ("M393", "Samsung"),
+        ("M391", "Samsung"),
+        ("M323", "Samsung"),
+        ("M425", "Samsung"),
+        ("HMA", "SK hynix"),
+        ("HMC", "SK hynix"),
+        ("HMT", "SK hynix"),
+        ("TED", "Team Group"),
+        ("TF", "Team Group"),
+        ("TLZ", "Team Group"),
+        ("FF", "Team Group"),
+        ("PVS", "Patriot"),
+        ("PV", "Patriot"),
+        ("PSD", "Patriot"),
+        ("AX4", "ADATA"),
+        ("AX5", "ADATA"),
+        ("AD4", "ADATA"),
+        ("AD5", "ADATA"),
+        ("NT", "Nanya"),
+    ];
+    PREFIXES
+        .iter()
+        .find(|(pre, _)| p.starts_with(pre))
+        .map(|(_, v)| *v)
+}
+
+#[cfg(test)]
+mod vendor_tests {
+    use super::*;
+
+    #[test]
+    fn manufacturer_fallbacks() {
+        assert_eq!(module_manufacturer("Unknown", "F4-3466C16-8GVK"), "G.Skill");
+        assert_eq!(module_manufacturer("", "CMK16GX4M2B3200C16"), "Corsair");
+        assert_eq!(module_manufacturer("Kingston", "KF432C16BB/8"), "Kingston");
+        assert_eq!(module_manufacturer("04CD", "x"), "G.Skill");
+        assert_eq!(module_manufacturer("Unknown", "XYZ"), "Unknown");
     }
 }

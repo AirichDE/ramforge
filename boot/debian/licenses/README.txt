@@ -12,7 +12,8 @@ Debian GNU/Linux 12 (Live-System auf diesem Medium)
   Die genaue Paketliste mit Versionen steht in /live/filesystem.packages.
   Quellcode jeder Paketversion: https://snapshot.debian.org/ bzw.
   https://sources.debian.org/ (Paketname + Version aus filesystem.packages).
-  Lizenztexte der einzelnen Pakete liegen im System unter /usr/share/common-licenses.
+  Copyright-Hinweise jedes Pakets: /usr/share/doc/<Paket>/copyright,
+  vollständige Lizenztexte: /usr/share/common-licenses (beides im Live-System).
 
 Memtest86+ (Booteintrag "Werkzeuge")
   GNU General Public License v2.0, https://www.memtest.org/ ,

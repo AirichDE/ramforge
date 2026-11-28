@@ -7,6 +7,8 @@
 //! voltage) and is reported as an error, like a memory error.
 
 use crate::rng::{splitmix, Rng};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,8 +30,11 @@ impl CpuKind {
     pub const ALL: [CpuKind; 3] = [CpuKind::Integer, CpuKind::Float, CpuKind::Simd];
     pub fn name(self) -> &'static str {
         match self {
-            CpuKind::Integer => "Ganzzahl (Hash + Sortieren)",
-            CpuKind::Float => "Gleitkomma (Matrix 128×128, f64)",
+            CpuKind::Integer => t!("Ganzzahl (Hash + Sortieren)", "Integer (hash + sort)"),
+            CpuKind::Float => t!(
+                "Gleitkomma (Matrix 128×128, f64)",
+                "Floating point (matrix 128×128, f64)"
+            ),
             CpuKind::Simd => "SIMD (FMA, f32)",
         }
     }
@@ -82,7 +87,9 @@ fn integer_round(seed: u64, data: &mut [u64], keys: &mut [u32], tmp: &mut [u32])
     }
     let mut h = seed;
     for (i, &d) in data.iter().enumerate() {
-        h = splitmix(h ^ d).rotate_left((i & 31) as u32).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h = splitmix(h ^ d)
+            .rotate_left((i & 31) as u32)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
     for (i, k) in keys.iter_mut().enumerate() {
         *k = (data[i % data.len()] >> 17) as u32;
@@ -104,7 +111,9 @@ fn integer_round(seed: u64, data: &mut [u64], keys: &mut [u32], tmp: &mut [u32])
         }
         keys.copy_from_slice(tmp);
     }
-    let sorted_sum = keys.iter().enumerate().fold(0u64, |a, (i, &k)| a.wrapping_add((k as u64).wrapping_mul(i as u64 + 1)));
+    let sorted_sum = keys.iter().enumerate().fold(0u64, |a, (i, &k)| {
+        a.wrapping_add((k as u64).wrapping_mul(i as u64 + 1))
+    });
     let bytes = (data.len() * 8 + keys.len() * 4 * 4) as u64;
     (h ^ sorted_sum, bytes)
 }
@@ -216,7 +225,8 @@ fn simd_path() -> SimdPath {
         if std::arch::is_x86_feature_detected!("avx512f") {
             return SimdPath::Avx512;
         }
-        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
             return SimdPath::Avx2;
         }
     }
@@ -278,7 +288,14 @@ impl Work {
 const SEEDS: u64 = 8;
 
 /// Runs `kind` on `threads` threads for `secs`. Returns (work per second, errors).
-fn measure(kind: CpuKind, path: SimdPath, threads: usize, secs: f64, reference: &[u64], cancel: &AtomicBool) -> (f64, u64) {
+fn measure(
+    kind: CpuKind,
+    path: SimdPath,
+    threads: usize,
+    secs: f64,
+    reference: &[u64],
+    cancel: &AtomicBool,
+) -> (f64, u64) {
     let barrier = Barrier::new(threads);
     let results: Vec<(u64, u64, f64)> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads)
@@ -302,7 +319,10 @@ fn measure(kind: CpuKind, path: SimdPath, threads: usize, secs: f64, reference: 
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap_or((0, 1, 1.0))).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or((0, 1, 1.0)))
+            .collect()
     });
     let total: f64 = results.iter().map(|r| r.0 as f64 / r.2.max(1e-9)).sum();
     (total, results.iter().map(|r| r.1).sum())
@@ -310,7 +330,11 @@ fn measure(kind: CpuKind, path: SimdPath, threads: usize, secs: f64, reference: 
 
 /// Runs one CPU benchmark, single-thread then multi-thread, `secs` each.
 pub fn run_one(kind: CpuKind, threads: usize, secs: f64, cancel: &AtomicBool) -> CpuScore {
-    let path = if kind == CpuKind::Simd { simd_path() } else { SimdPath::None };
+    let path = if kind == CpuKind::Simd {
+        simd_path()
+    } else {
+        SimdPath::None
+    };
     let variant = match (kind, path) {
         (CpuKind::Simd, SimdPath::Avx512) => "AVX-512F",
         (CpuKind::Simd, SimdPath::Avx2) => "AVX2+FMA",
@@ -330,7 +354,13 @@ pub fn run_one(kind: CpuKind, threads: usize, secs: f64, cancel: &AtomicBool) ->
         skipped: None,
     };
     if kind == CpuKind::Simd && path == SimdPath::None {
-        score.skipped = Some("Kein AVX2/FMA: SIMD-Test übersprungen".into());
+        score.skipped = Some(
+            t!(
+                "Kein AVX2/FMA: SIMD-Test übersprungen",
+                "No AVX2/FMA: SIMD test skipped"
+            )
+            .into(),
+        );
         return score;
     }
     // Reference checksums from one single-threaded pass.
@@ -352,7 +382,12 @@ pub fn run_one(kind: CpuKind, threads: usize, secs: f64, cancel: &AtomicBool) ->
 }
 
 /// Runs all CPU benchmarks. `progress(fraction, step)` before each step.
-pub fn run_all(threads: usize, secs: f64, cancel: &AtomicBool, progress: &dyn Fn(f32, &str)) -> Vec<CpuScore> {
+pub fn run_all(
+    threads: usize,
+    secs: f64,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(f32, &str),
+) -> Vec<CpuScore> {
     let mut out = Vec::new();
     for (i, k) in CpuKind::ALL.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
@@ -361,7 +396,7 @@ pub fn run_all(threads: usize, secs: f64, cancel: &AtomicBool, progress: &dyn Fn
         progress(i as f32 / CpuKind::ALL.len() as f32, k.name());
         out.push(run_one(*k, threads, secs, cancel));
     }
-    progress(1.0, "Fertig");
+    progress(1.0, t!("Fertig", "Done"));
     out
 }
 
@@ -374,11 +409,19 @@ mod tests {
         let mut w1 = Work::new();
         let mut w2 = Work::new();
         for k in CpuKind::ALL {
-            let p = if k == CpuKind::Simd { simd_path() } else { SimdPath::None };
+            let p = if k == CpuKind::Simd {
+                simd_path()
+            } else {
+                SimdPath::None
+            };
             for i in 0..3 {
                 assert_eq!(w1.round(k, p, i).0, w2.round(k, p, i).0, "{k:?} Runde {i}");
             }
-            assert_ne!(w1.round(k, p, 0).0, w1.round(k, p, 1).0, "{k:?}: Runden müssen sich unterscheiden");
+            assert_ne!(
+                w1.round(k, p, 0).0,
+                w1.round(k, p, 1).0,
+                "{k:?}: Runden müssen sich unterscheiden"
+            );
         }
     }
 
@@ -406,7 +449,10 @@ mod tests {
         simd_fill(11, &mut w.x, &mut w.y);
         let s = simd_scalar(&w.x, &w.y);
         let v = f32::from_bits(simd_round(simd_path(), &w.x, &w.y).0 as u32);
-        assert!((s - v).abs() <= 1e-2 * s.abs().max(1.0), "skalar {s} vs simd {v}");
+        assert!(
+            (s - v).abs() <= 1e-2 * s.abs().max(1.0),
+            "skalar {s} vs simd {v}"
+        );
     }
 
     #[test]
@@ -415,6 +461,10 @@ mod tests {
         let s = run_one(CpuKind::Integer, 2, 0.3, &cancel);
         assert_eq!(s.errors, 0);
         assert!(s.single_raw > 0.0 && s.multi_raw > 0.0);
-        assert!(s.scaling > 1.2, "2 Threads sollten schneller sein: {}", s.scaling);
+        assert!(
+            s.scaling > 1.2,
+            "2 Threads sollten schneller sein: {}",
+            s.scaling
+        );
     }
 }

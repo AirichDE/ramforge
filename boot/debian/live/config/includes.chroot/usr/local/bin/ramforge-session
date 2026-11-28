@@ -13,40 +13,116 @@ log() {
 set -a
 . /run/ramforge.env
 set +a
-log "Sitzung als $(id -un), XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+log "Sitzung als $(id -un), XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR, LANG=$LANG"
+# Screen text in the boot menu's language: t "deutsch" "english"
+t() { case "$LANG" in de*) echo "$1" ;; *) echo "$2" ;; esac; }
+
+gpu_info() {
+    # Graphics hardware and drivers, for the log and the error screen.
+    lspci -nnk 2>/dev/null | grep -A3 -E "VGA|3D controller|Display controller" | grep -vE "Subsystem" | sed 's/^/  /'
+    echo "  DRM: $(ls /dev/dri 2>/dev/null | tr '\n' ' ')  Framebuffer: $(ls /dev/fb* 2>/dev/null | tr '\n' ' ')"
+}
+
+run_x11() {
+    # Fallback without a kernel graphics driver (e.g. GPUs newer than the
+    # kernel, or "Grafik-Sicherheitsmodus"): X server on the firmware
+    # framebuffer (/dev/fb0), software rendering.
+    # Several X configurations, first that gives a screen wins:
+    #   fbdev     firmware framebuffer /dev/fb0 (ramforge-prepare makes it
+    #             usable when it sits on a PCI card without driver)
+    #   auto      no config, X chooses (modesetting/fbdev/vesa)
+    #   vesa      VESA BIOS (only when booted in legacy/CSM mode)
+    local tries=() rc=1 c
+    if ls /dev/dri/card* >/dev/null 2>&1; then
+        tries=(auto)
+    else
+        tries=(fbdev auto)
+        [ -d /sys/firmware/efi ] || tries+=(vesa)
+    fi
+    for c in "${tries[@]}"; do
+        local cfg=()
+        [ "$c" != auto ] && cfg=(-config "ramforge-$c.conf")
+        log "starte X11 ($c)"
+        local n; n=$(wc -l < "$LOG")
+        # The wrapped (setuid) server refuses -logfile; it logs to /var/log/Xorg.0.log.
+        LIBGL_ALWAYS_SOFTWARE=1 xinit /usr/local/bin/ramforge-x11 -- :0 vt1 -keeptty -nolisten tcp \
+            "${cfg[@]}" >>"$LOG" 2>&1
+        rc=$?
+        [ $rc -eq 0 ] && return 0
+        grep -E "\(EE\)" /var/log/Xorg.0.log 2>/dev/null | grep -v "^(EE) *$" | tail -n 4 >>"$LOG"
+        # The X server ran but RAMForge itself failed: another config will not help.
+        tail -n +"$((n + 1))" "$LOG" | grep -q "RAMForge (X11) beendet" && return $rc
+        cp /var/log/Xorg.0.log "/run/Xorg-$c.log" 2>/dev/null
+    done
+    # Why the X server found no screen (log, serial console, error screen).
+    {
+        echo "  fb: $(cat /proc/fb 2>/dev/null | tr '\n' ' ')  fb0 -> $(readlink -f /sys/class/graphics/fb0/device 2>/dev/null)"
+        grep -hE "\(EE\)|\(WW\)|FBDEV|fbdev|Matched|claim|Screen" /run/Xorg-fbdev.log 2>/dev/null \
+            | grep -vE "^\[ *[0-9.]+\] \(EE\) *$|Please also check|wiki.x.org" | head -n 12 | sed 's/^/  X: /'
+    } >>"$LOG"
+    [ -w "$SERIAL" ] && grep -vE "^\s*$" /run/Xorg-fbdev.log > "$SERIAL" 2>/dev/null
+    return $rc
+}
 
 run_gui() {
-    # GPU rendering first; software rendering if that fails.
-    log "starte cage (GPU)"
-    cage -s -- /usr/local/bin/ramforge >>"$LOG" 2>&1 && return 0
-    log "cage (GPU) beendet mit $?, versuche Software-Grafik"
-    WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 cage -s -- /usr/local/bin/ramforge >>"$LOG" 2>&1
+    if ls /dev/dri/card* >/dev/null 2>&1; then
+        # Kernel graphics driver present: Wayland kiosk, GPU first, then software.
+        log "starte cage (GPU)"
+        cage -s -- /usr/local/bin/ramforge >>"$LOG" 2>&1 && return 0
+        log "cage (GPU) beendet mit $?, versuche Software-Grafik"
+        WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 cage -s -- /usr/local/bin/ramforge >>"$LOG" 2>&1 && return 0
+        log "cage (Software) beendet mit $?, versuche X11"
+    else
+        log "kein Grafiktreiber (/dev/dri leer), nutze Framebuffer"
+    fi
+    run_x11
 }
+
+log "Grafik:"
+gpu_info >> "$LOG"
 
 while true; do
     clear
-    echo "RAMForge wird gestartet …"
-    if run_gui; then
+    t "RAMForge wird gestartet …" "Starting RAMForge …"
+    t0=$(date +%s)
+    run_gui
+    rc=$?
+    # Mirror the session log to the serial console (boot tests, debugging).
+    [ -w "$SERIAL" ] && tail -n 25 "$LOG" > "$SERIAL" 2>/dev/null
+    # Ending within 15 s is never a deliberate quit: treat it as a failure.
+    if [ $rc -eq 0 ] && [ $(( $(date +%s) - t0 )) -lt 15 ]; then
+        log "RAMForge nach weniger als 15 s beendet"
+        rc=1
+    fi
+    if [ $rc -eq 0 ]; then
         log "RAMForge regulär beendet"
     else
-        log "Grafik fehlgeschlagen (Exit $?)"
-        [ -w "$SERIAL" ] && tail -n 30 "$LOG" > "$SERIAL" 2>/dev/null
+        log "Grafik fehlgeschlagen (Exit $rc)"
         clear
-        echo "Die grafische Oberfläche konnte nicht starten. Letzte Meldungen:"
+        t "Die grafische Oberfläche konnte nicht starten. Letzte Meldungen:" \
+          "The graphical interface could not start. Last messages:"
         echo
-        tail -n 15 "$LOG"
+        tail -n 18 "$LOG"
         echo
-        echo "Tipp: Bei schwarzem Bild im Startmenü „Grafik-Sicherheitsmodus“ wählen."
+        t "Grafikkarte:" "Graphics card:"
+        gpu_info
+        echo "  Kernel: $(uname -r)"
+        echo
+        t "Bitte ein Foto davon an report@ramforge.org schicken." \
+          "Please send a photo of this screen to report@ramforge.org."
+        t "Tipp: Bei schwarzem Bild im Startmenü „Grafik-Sicherheitsmodus“ wählen." \
+          "Tip: if the screen stays black, choose \"Safe graphics mode\" in the boot menu."
         sleep 20
     fi
     sync
     echo
-    echo "RAMForge wurde beendet."
-    echo "  [Enter] neu starten   s = Konsole   a = ausschalten   r = Rechner neu starten"
+    t "RAMForge wurde beendet." "RAMForge has ended."
+    t "  [Enter] neu starten   s = Konsole   a = ausschalten   r = Rechner neu starten" \
+      "  [Enter] restart   s = shell   o = power off   r = reboot"
     read -r -t 120 choice
     case "$choice" in
         s) exec bash --login ;;
-        a) systemctl poweroff ;;
+        a|o) systemctl poweroff ;;
         r) systemctl reboot ;;
     esac
 done

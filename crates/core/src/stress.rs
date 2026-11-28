@@ -5,11 +5,15 @@
 
 use crate::errors::{ErrorSink, MemError};
 use crate::rng::{splitmix, Rng};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-pub const TEST_NAME: &str = "CPU+RAM-Last";
+pub fn test_name() -> &'static str {
+    t!("CPU+RAM-Last", "CPU+RAM load")
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StressResult {
@@ -64,7 +68,7 @@ fn worker(t: usize, words: usize, stop: &AtomicBool, bytes: &AtomicU64, sink: &E
             if got != want {
                 sink.report(MemError {
                     time: chrono::Local::now(),
-                    test: TEST_NAME.into(),
+                    test: test_name().into(),
                     pass: round as u32,
                     thread: t,
                     address: (base + i * 8) as u64,
@@ -112,22 +116,38 @@ pub fn run(
                 tick = Instant::now();
                 progress(
                     (t0.elapsed().as_secs_f64() / secs as f64) as f32,
-                    &format!("{gbs:.1} GB/s · {} Fehler", sink.count()),
+                    &tf!(
+                        "{gbs:.1} GB/s · {} Fehler",
+                        "{gbs:.1} GB/s · {} errors",
+                        sink.count()
+                    ),
                 );
             }
         }
         stop.store(true, Ordering::Relaxed);
     });
     // The first second includes allocation and page faults: not counted.
-    let steady: Vec<f64> = if samples.len() > 2 { samples[1..].to_vec() } else { samples.clone() };
-    let avg = if steady.is_empty() { 0.0 } else { steady.iter().sum::<f64>() / steady.len() as f64 };
+    let steady: Vec<f64> = if samples.len() > 2 {
+        samples[1..].to_vec()
+    } else {
+        samples.clone()
+    };
+    let avg = if steady.is_empty() {
+        0.0
+    } else {
+        steady.iter().sum::<f64>() / steady.len() as f64
+    };
     StressResult {
         secs: t0.elapsed().as_secs_f64(),
         threads,
         buffer_bytes: (words * 8 * threads) as u64,
         verified_bytes: bytes.load(Ordering::Relaxed),
         avg_gbs: avg,
-        min_gbs: steady.iter().cloned().fold(f64::INFINITY, f64::min).min(avg),
+        min_gbs: steady
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min)
+            .min(avg),
         max_gbs: steady.iter().cloned().fold(0.0, f64::max),
         samples,
         errors: sink.count(),

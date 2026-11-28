@@ -3,6 +3,8 @@
 //! Locking keeps the operating system from paging the buffer out while a test
 //! runs. If the pages were swapped to disk we would be testing the SSD, not the RAM.
 
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use std::ptr::NonNull;
 
 /// Physical memory status of the machine.
@@ -43,10 +45,14 @@ impl TestBuffer {
     pub fn allocate(bytes: usize, lock: bool) -> Result<Self, String> {
         let bytes = bytes / PAGE * PAGE;
         if bytes == 0 {
-            return Err("Puffergröße ist 0".into());
+            return Err(t!("Puffergröße ist 0", "buffer size is 0").into());
         }
         let ptr = sys::alloc(bytes).ok_or_else(|| {
-            format!("Speicher konnte nicht reserviert werden ({} MiB)", bytes >> 20)
+            tf!(
+                "Speicher konnte nicht reserviert werden ({} MiB)",
+                "memory could not be allocated ({} MiB)",
+                bytes >> 20
+            )
         })?;
         let locked = lock && sys::lock(ptr, bytes);
         Ok(Self {
@@ -95,7 +101,12 @@ mod sys {
 
     pub fn alloc(bytes: usize) -> Option<*mut u8> {
         let p = unsafe {
-            VirtualAlloc(std::ptr::null(), bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
+            VirtualAlloc(
+                std::ptr::null(),
+                bytes,
+                MEM_COMMIT | MEM_RESERVE,
+                PAGE_READWRITE,
+            )
         };
         (!p.is_null()).then_some(p as *mut u8)
     }
@@ -119,7 +130,10 @@ mod sys {
         if unsafe { GlobalMemoryStatusEx(&mut s) } == 0 {
             return MemStatus::default();
         }
-        MemStatus { total_bytes: s.ullTotalPhys, available_bytes: s.ullAvailPhys }
+        MemStatus {
+            total_bytes: s.ullTotalPhys,
+            available_bytes: s.ullAvailPhys,
+        }
     }
 }
 
@@ -151,7 +165,10 @@ mod sys {
     }
     pub fn prepare_lock(_total: u64) -> bool {
         // On the live system we run as root; RLIMIT_MEMLOCK is raised by the launcher.
-        let lim = libc::rlimit { rlim_cur: libc::RLIM_INFINITY, rlim_max: libc::RLIM_INFINITY };
+        let lim = libc::rlimit {
+            rlim_cur: libc::RLIM_INFINITY,
+            rlim_max: libc::RLIM_INFINITY,
+        };
         unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &lim) == 0 }
     }
     pub fn mem_status() -> MemStatus {
@@ -164,6 +181,9 @@ mod sys {
                 .unwrap_or(0)
                 * 1024
         };
-        MemStatus { total_bytes: field("MemTotal:"), available_bytes: field("MemAvailable:") }
+        MemStatus {
+            total_bytes: field("MemTotal:"),
+            available_bytes: field("MemAvailable:"),
+        }
     }
 }

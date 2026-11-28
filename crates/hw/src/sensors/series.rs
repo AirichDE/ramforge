@@ -66,8 +66,16 @@ impl SeriesBuf {
                 }
             }
             _ => {
-                let start = if self.width > 0.0 { (t / self.width).floor() * self.width } else { t };
-                self.buckets.push(Bucket { start, min: p, max: p });
+                let start = if self.width > 0.0 {
+                    (t / self.width).floor() * self.width
+                } else {
+                    t
+                };
+                self.buckets.push(Bucket {
+                    start,
+                    min: p,
+                    max: p,
+                });
             }
         }
         if self.buckets.len() * 2 > self.max_points {
@@ -83,7 +91,9 @@ impl SeriesBuf {
             if self.buckets.len() * 2 <= self.max_points {
                 return;
             }
-            let (Some(first), Some(last)) = (self.buckets.first(), self.buckets.last()) else { return };
+            let (Some(first), Some(last)) = (self.buckets.first(), self.buckets.last()) else {
+                return;
+            };
             let span = (last.start - first.start).abs().max(1e-9);
             self.width = if self.width > 0.0 {
                 self.width * 2.0
@@ -104,7 +114,11 @@ impl SeriesBuf {
                             m.max = b.max;
                         }
                     }
-                    _ => merged.push(Bucket { start, min: b.min, max: b.max }),
+                    _ => merged.push(Bucket {
+                        start,
+                        min: b.min,
+                        max: b.max,
+                    }),
                 }
             }
             self.buckets = merged;
@@ -219,12 +233,19 @@ mod tests {
         }
         let pts = s.points();
         assert!(pts.len() <= MAX_POINTS, "{} Punkte", pts.len());
-        assert!(pts.len() > MAX_POINTS / 8, "zu stark verdichtet: {}", pts.len());
+        assert!(
+            pts.len() > MAX_POINTS / 8,
+            "zu stark verdichtet: {}",
+            pts.len()
+        );
         assert!(pts.iter().any(|p| p[1] == 97.5), "Spitze verloren");
         assert!(pts.iter().any(|p| p[1] == 12.25), "Einbruch verloren");
         assert_eq!(s.max(), 97.5);
         assert_eq!(s.min(), 12.25);
-        assert!(pts.windows(2).all(|w| w[0][0] <= w[1][0]), "Zeit nicht sortiert");
+        assert!(
+            pts.windows(2).all(|w| w[0][0] <= w[1][0]),
+            "Zeit nicht sortiert"
+        );
         let r = s.reduced(500);
         assert!(r.len() <= 500);
         assert!(r.iter().any(|p| p[1] == 97.5) && r.iter().any(|p| p[1] == 12.25));

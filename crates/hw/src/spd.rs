@@ -14,6 +14,8 @@
 //! profile decoder is marked experimental until it is checked against a
 //! collection of real dumps (contributions welcome, see CONTRIBUTING.md).
 
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -61,7 +63,9 @@ impl Timings {
             self.trcd,
             self.trp,
             self.tras,
-            self.voltage_v.map(|v| format!("  {v:.2} V")).unwrap_or_default()
+            self.voltage_v
+                .map(|v| format!("  {v:.2} V"))
+                .unwrap_or_default()
         )
     }
 }
@@ -92,7 +96,13 @@ fn bcd(b: u8) -> u32 {
 
 fn ascii(b: &[u8]) -> String {
     b.iter()
-        .map(|&c| if (0x20..0x7F).contains(&c) { c as char } else { ' ' })
+        .map(|&c| {
+            if (0x20..0x7F).contains(&c) {
+                c as char
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .trim()
         .to_string()
@@ -121,13 +131,16 @@ pub fn jep106(cont: u8, id: u8) -> String {
 
 pub fn decode(spd: &[u8]) -> Result<SpdInfo, String> {
     if spd.len() < 128 {
-        return Err("SPD-Daten zu kurz".into());
+        return Err(t!("SPD-Daten zu kurz", "SPD data too short").into());
     }
     match spd[2] {
         0x0C => decode_ddr4(spd),
         0x12 => decode_ddr5(spd),
-        0x0B => Err("DDR3 wird noch nicht dekodiert".into()),
-        t => Err(format!("Unbekannter DRAM-Typ 0x{t:02X}")),
+        0x0B => Err(t!("DDR3 wird noch nicht dekodiert", "DDR3 is not decoded yet").into()),
+        t => Err(tf!(
+            "Unbekannter DRAM-Typ 0x{t:02X}",
+            "Unknown DRAM type 0x{t:02X}"
+        )),
     }
 }
 
@@ -137,13 +150,17 @@ fn ddr4_module_type(b: u8) -> &'static str {
         0x02 => "UDIMM",
         0x03 => "SO-DIMM",
         0x04 => "LRDIMM",
-        _ => "Sonstige",
+        _ => t!("Sonstige", "Other"),
     }
 }
 
 fn decode_ddr4(s: &[u8]) -> Result<SpdInfo, String> {
     if s.len() < 384 {
-        return Err("DDR4-SPD braucht mindestens 384 Byte".into());
+        return Err(t!(
+            "DDR4-SPD braucht mindestens 384 Byte",
+            "DDR4 SPD needs at least 384 bytes"
+        )
+        .into());
     }
     let mtb = |b: u8| b as i64 * 125; // 0.125 ns
     let ftb = |b: u8| b as i8 as i64; // 1 ps, signed
@@ -173,8 +190,15 @@ fn decode_ddr4(s: &[u8]) -> Result<SpdInfo, String> {
     let bus_width = 8u32 << (s[13] & 0x07);
     let ecc = (s[13] >> 3) & 0x03 == 1;
     let three_ds = s[6] & 0x03 == 2;
-    let dies = if three_ds { ((s[6] >> 4) & 0x07) as u32 + 1 } else { 1 };
-    let capacity = (density_gbit / 8.0 * (bus_width / device_width) as f64 * ranks as f64 * dies as f64
+    let dies = if three_ds {
+        ((s[6] >> 4) & 0x07) as u32 + 1
+    } else {
+        1
+    };
+    let capacity = (density_gbit / 8.0
+        * (bus_width / device_width) as f64
+        * ranks as f64
+        * dies as f64
         * (1u64 << 30) as f64) as u64;
 
     let mut info = SpdInfo {
@@ -201,7 +225,16 @@ fn decode_ddr4(s: &[u8]) -> Result<SpdInfo, String> {
     };
     if s.len() >= 352 {
         info.manufacturer = jep106(s[320], s[321]);
-        info.manufacture_date = if s[323] != 0 { format!("20{:02} KW {:02}", bcd(s[323]), bcd(s[324])) } else { String::new() };
+        info.manufacture_date = if s[323] != 0 {
+            tf!(
+                "20{:02} KW {:02}",
+                "20{:02} week {:02}",
+                bcd(s[323]),
+                bcd(s[324])
+            )
+        } else {
+            String::new()
+        };
         info.serial = s[325..329].iter().map(|b| format!("{b:02X}")).collect();
         info.part_number = ascii(&s[329..349]);
         info.dram_manufacturer = jep106(s[350], s[351]);
@@ -213,7 +246,13 @@ fn decode_ddr4(s: &[u8]) -> Result<SpdInfo, String> {
                 info.profiles.push(decode_xmp2_profile(s, base, n + 1));
             }
         }
-        info.notes.push("XMP-2.0-Dekodierung ist experimentell".into());
+        info.notes.push(
+            t!(
+                "XMP-2.0-Dekodierung ist experimentell",
+                "XMP 2.0 decoding is experimental"
+            )
+            .into(),
+        );
     }
     Ok(info)
 }
@@ -232,7 +271,7 @@ fn decode_xmp2_profile(s: &[u8], b: usize, num: usize) -> Timings {
     let trc = ((((s[b + 11] >> 4) as i64) << 8) | s[b + 13] as i64) * 125 + ftb(s[b + 34]);
     let trfc1 = u16::from_le_bytes([s[b + 14], s[b + 15]]) as i64 * 125;
     Timings {
-        name: format!("XMP Profil {num}"),
+        name: tf!("XMP Profil {num}", "XMP profile {num}"),
         speed_mts: mts(tck),
         tck_ps: tck as u32,
         cl: clocks(taa, tck),
@@ -257,13 +296,17 @@ fn ddr5_module_type(b: u8) -> &'static str {
         0x08 => "CAMM2",
         0x0A => "DDIMM",
         0x0B => "Solder down",
-        _ => "Sonstige",
+        _ => t!("Sonstige", "Other"),
     }
 }
 
 fn decode_ddr5(s: &[u8]) -> Result<SpdInfo, String> {
     if s.len() < 640 {
-        return Err("DDR5-SPD braucht mindestens 640 Byte".into());
+        return Err(t!(
+            "DDR5-SPD braucht mindestens 640 Byte",
+            "DDR5 SPD needs at least 640 bytes"
+        )
+        .into());
     }
     let w = |o: usize| u16::from_le_bytes([s[o], s[o + 1]]) as i64;
     let tck = w(20);
@@ -291,7 +334,8 @@ fn decode_ddr5(s: &[u8]) -> Result<SpdInfo, String> {
     let bus_per_channel = 8u32 << (s[235] & 0x07);
     let channels = ((s[235] >> 5) & 0x03) as u32 + 1;
     let ecc = (s[235] >> 3) & 0x03 != 0;
-    let capacity = (channels as f64 * (bus_per_channel / device_width) as f64 * dies * density_gbit / 8.0
+    let capacity = (channels as f64 * (bus_per_channel / device_width) as f64 * dies * density_gbit
+        / 8.0
         * ranks as f64
         * (1u64 << 30) as f64) as u64;
     let mut info = SpdInfo {
@@ -322,7 +366,16 @@ fn decode_ddr5(s: &[u8]) -> Result<SpdInfo, String> {
     }
     if s.len() >= 554 {
         info.manufacturer = jep106(s[512], s[513]);
-        info.manufacture_date = if s[515] != 0 { format!("20{:02} KW {:02}", bcd(s[515]), bcd(s[516])) } else { String::new() };
+        info.manufacture_date = if s[515] != 0 {
+            tf!(
+                "20{:02} KW {:02}",
+                "20{:02} week {:02}",
+                bcd(s[515]),
+                bcd(s[516])
+            )
+        } else {
+            String::new()
+        };
         info.serial = s[517..521].iter().map(|b| format!("{b:02X}")).collect();
         info.part_number = ascii(&s[521..551]);
         info.dram_manufacturer = jep106(s[552], s[553]);
@@ -330,7 +383,10 @@ fn decode_ddr5(s: &[u8]) -> Result<SpdInfo, String> {
     info.xmp_present = s.len() >= 642 && s[640] == 0x0C && s[641] == 0x4A;
     info.expo_present = s.len() >= 836 && &s[832..836] == b"EXPO";
     if info.xmp_present || info.expo_present {
-        info.notes.push("XMP-3.0/EXPO-Profile erkannt; Profilwerte werden in einer späteren Version dekodiert".into());
+        info.notes.push(
+            t!("XMP-3.0/EXPO-Profile erkannt; Profilwerte werden in einer späteren Version dekodiert", "XMP 3.0/EXPO profiles detected; profile values will be decoded in a later version")
+                .into(),
+        );
     }
     Ok(info)
 }
@@ -339,7 +395,9 @@ fn decode_ddr5(s: &[u8]) -> Result<SpdInfo, String> {
 /// Needs `modprobe ee1004` / `modprobe spd5118` on the live system.
 pub fn read_linux_eeproms() -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
-    let Ok(dir) = std::fs::read_dir("/sys/bus/i2c/devices") else { return out };
+    let Ok(dir) = std::fs::read_dir("/sys/bus/i2c/devices") else {
+        return out;
+    };
     let mut entries: Vec<_> = dir.flatten().collect();
     entries.sort_by_key(|e| e.file_name());
     for e in entries {

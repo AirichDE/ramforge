@@ -12,10 +12,11 @@ ramforge-core = { path = "../../crates/core" }
 ramforge-hw = { path = "../../crates/hw" }
 ramforge-update = { path = "../../crates/update", features = ["ui"] }
 ramforge-gpu = { path = "../../crates/gpu" }
+ramforge-i18n = { path = "../../crates/i18n" }
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "links", "clipboard"] }
 egui_plot = "0.38"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.18"

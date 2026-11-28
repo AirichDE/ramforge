@@ -22,6 +22,8 @@ pub mod windows;
 
 pub use series::SeriesBuf;
 
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
@@ -54,12 +56,12 @@ impl SensorGroup {
     pub fn name(self) -> &'static str {
         match self {
             SensorGroup::Cpu => "CPU",
-            SensorGroup::Memory => "Arbeitsspeicher",
+            SensorGroup::Memory => t!("Arbeitsspeicher", "Memory"),
             SensorGroup::Mainboard => "Mainboard",
-            SensorGroup::Storage => "Laufwerke / Controller",
-            SensorGroup::Gpu => "Grafik",
+            SensorGroup::Storage => t!("Laufwerke / Controller", "Drives / controllers"),
+            SensorGroup::Gpu => t!("Grafik", "Graphics"),
             SensorGroup::System => "System",
-            SensorGroup::Other => "Sonstige",
+            SensorGroup::Other => t!("Sonstige", "Other"),
         }
     }
 }
@@ -79,14 +81,14 @@ pub enum SensorKind {
 impl SensorKind {
     pub fn name(self) -> &'static str {
         match self {
-            SensorKind::Temperature => "Temperatur",
-            SensorKind::Voltage => "Spannung",
-            SensorKind::Fan => "Lüfter",
-            SensorKind::Current => "Strom",
-            SensorKind::Power => "Leistung",
-            SensorKind::Clock => "Takt",
-            SensorKind::Load => "Auslastung",
-            SensorKind::Other => "Sonstiges",
+            SensorKind::Temperature => t!("Temperatur", "Temperature"),
+            SensorKind::Voltage => t!("Spannung", "Voltage"),
+            SensorKind::Fan => t!("Lüfter", "Fan"),
+            SensorKind::Current => t!("Strom", "Current"),
+            SensorKind::Power => t!("Leistung", "Power"),
+            SensorKind::Clock => t!("Takt", "Clock"),
+            SensorKind::Load => t!("Auslastung", "Load"),
+            SensorKind::Other => t!("Sonstiges", "Other"),
         }
     }
 }
@@ -136,7 +138,15 @@ impl SensorStat {
         }
     }
     fn new(r: Reading) -> Self {
-        Self { min: r.value, max: r.value, sum: 0.0, count: 0, reading: r, history: VecDeque::new(), last_seen: None }
+        Self {
+            min: r.value,
+            max: r.value,
+            sum: 0.0,
+            count: 0,
+            reading: r,
+            history: VecDeque::new(),
+            last_seen: None,
+        }
     }
     fn update(&mut self, r: Reading, t: f64, now: Instant) {
         let v = r.value;
@@ -163,7 +173,9 @@ impl SensorStat {
     }
     /// True if the sensor delivered a value within the last few seconds.
     pub fn is_live(&self) -> bool {
-        self.last_seen.map(|t| t.elapsed() < Duration::from_secs(5)).unwrap_or(false)
+        self.last_seen
+            .map(|t| t.elapsed() < Duration::from_secs(5))
+            .unwrap_or(false)
     }
 }
 
@@ -314,7 +326,10 @@ impl SensorHub {
                     for s in sources.iter_mut() {
                         s.poll(&mut buf);
                     }
-                    let status = sources.iter().map(|s| (s.name().to_string(), s.status())).collect();
+                    let status = sources
+                        .iter()
+                        .map(|s| (s.name().to_string(), s.status()))
+                        .collect();
                     Self::ingest(&i2, std::mem::take(&mut buf), status);
                     let wait = Duration::from_millis(i2.interval_ms.load(Ordering::Relaxed));
                     while t0.elapsed() < wait && !i2.stop.load(Ordering::Relaxed) {
@@ -335,7 +350,10 @@ impl SensorHub {
         if let Some(sess) = st.session.as_mut() {
             let ts = t - sess.t0;
             for r in &readings {
-                sess.series.entry(r.id.clone()).or_insert_with(SeriesBuf::new).push(ts, r.value);
+                sess.series
+                    .entry(r.id.clone())
+                    .or_insert_with(SeriesBuf::new)
+                    .push(ts, r.value);
                 sess.meta.insert(r.id.clone(), r.clone());
             }
         }
@@ -357,16 +375,29 @@ impl SensorHub {
             let HubState { stats, order, .. } = &mut *st;
             order.sort_by(|a, b| {
                 let (x, y) = (&stats[a].reading, &stats[b].reading);
-                (x.group, &x.device, x.kind as u8, &x.label).cmp(&(y.group, &y.device, y.kind as u8, &y.label))
+                (x.group, &x.device, x.kind as u8, &x.label).cmp(&(
+                    y.group,
+                    &y.device,
+                    y.kind as u8,
+                    &y.label,
+                ))
             });
         }
         let events = std::mem::take(&mut st.pending_events);
-        let HubState { stats, recorder, .. } = &mut *st;
+        let HubState {
+            stats, recorder, ..
+        } = &mut *st;
         if let Some(rec) = recorder.as_mut() {
-            let mut line = format!("{},{:.1}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), t);
+            let mut line = format!(
+                "{},{:.1}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                t
+            );
             for id in &rec.columns {
                 match stats.get(id) {
-                    Some(s) if s.last_seen == Some(now) => line.push_str(&format!(",{}", s.reading.value)),
+                    Some(s) if s.last_seen == Some(now) => {
+                        line.push_str(&format!(",{}", s.reading.value))
+                    }
                     _ => line.push(','),
                 }
             }
@@ -383,7 +414,10 @@ impl SensorHub {
     /// All sensors in display order.
     pub fn snapshot(&self) -> Vec<SensorStat> {
         let st = self.inner.state.lock().unwrap();
-        st.order.iter().filter_map(|id| st.stats.get(id).cloned()).collect()
+        st.order
+            .iter()
+            .filter_map(|id| st.stats.get(id).cloned())
+            .collect()
     }
 
     /// Snapshot without the (large) history, for tables and reports.
@@ -392,13 +426,19 @@ impl SensorHub {
         st.order
             .iter()
             .filter_map(|id| st.stats.get(id))
-            .map(|s| SensorStat { history: VecDeque::new(), ..s.clone() })
+            .map(|s| SensorStat {
+                history: VecDeque::new(),
+                ..s.clone()
+            })
             .collect()
     }
 
     pub fn history(&self, id: &str) -> Vec<[f64; 2]> {
         let st = self.inner.state.lock().unwrap();
-        st.stats.get(id).map(|s| s.history.iter().copied().collect()).unwrap_or_default()
+        st.stats
+            .get(id)
+            .map(|s| s.history.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     pub fn source_status(&self) -> Vec<(String, String)> {
@@ -434,15 +474,20 @@ impl SensorHub {
         let now = self.inner.started.elapsed().as_secs_f64();
         let mut st = self.inner.state.lock().unwrap();
         let t = st.session.as_ref().map(|s| now - s.t0).unwrap_or(now);
-        let ev = SensorEvent { time: chrono::Local::now(), text: text.clone(), kind, t };
+        let ev = SensorEvent {
+            time: chrono::Local::now(),
+            text: text.clone(),
+            kind,
+            t,
+        };
         if let Some(sess) = st.session.as_mut() {
             sess.events.push(ev.clone());
         }
         st.events.push(ev);
         let prefix = match kind {
             EventKind::Info => "",
-            EventKind::Phase => "Phase: ",
-            EventKind::Error => "FEHLER: ",
+            EventKind::Phase => t!("Phase: ", "Phase: "),
+            EventKind::Error => t!("FEHLER: ", "ERROR: "),
         };
         st.pending_events.push(format!("{prefix}{text}"));
     }
@@ -462,7 +507,11 @@ impl SensorHub {
             label: label.to_string(),
             started: chrono::Local::now(),
             t0: self.inner.started.elapsed().as_secs_f64(),
-            csv: if rec.is_ok() { csv.map(Path::to_path_buf) } else { None },
+            csv: if rec.is_ok() {
+                csv.map(Path::to_path_buf)
+            } else {
+                None
+            },
             series: HashMap::new(),
             meta: HashMap::new(),
             events: Vec::new(),
@@ -488,7 +537,10 @@ impl SensorHub {
         self.stop_recording();
         let duration = self.inner.started.elapsed().as_secs_f64() - sess.t0;
         let order = self.inner.state.lock().unwrap().order.clone();
-        let mut ids: Vec<&String> = order.iter().filter(|id| sess.series.contains_key(*id)).collect();
+        let mut ids: Vec<&String> = order
+            .iter()
+            .filter(|id| sess.series.contains_key(*id))
+            .collect();
         for id in sess.series.keys() {
             if !ids.contains(&id) {
                 ids.push(id);
@@ -514,7 +566,14 @@ impl SensorHub {
                 })
             })
             .collect();
-        Some(SessionData { label: sess.label, started: sess.started, duration_secs: duration, csv: sess.csv, series, events: sess.events })
+        Some(SessionData {
+            label: sess.label,
+            started: sess.started,
+            duration_secs: duration,
+            csv: sess.csv,
+            series,
+            events: sess.events,
+        })
     }
 
     /// Writes one CSV row with the pending events right now (used at the end
@@ -524,7 +583,11 @@ impl SensorHub {
         let mut st = self.inner.state.lock().unwrap();
         let events = std::mem::take(&mut st.pending_events);
         if let Some(rec) = st.recorder.as_mut() {
-            let mut line = format!("{},{:.1}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), t);
+            let mut line = format!(
+                "{},{:.1}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                t
+            );
             for _ in &rec.columns {
                 line.push(',');
             }
@@ -540,7 +603,9 @@ impl SensorHub {
     }
 
     pub fn set_interval(&self, d: Duration) {
-        self.inner.interval_ms.store(d.as_millis().max(100) as u64, Ordering::Relaxed);
+        self.inner
+            .interval_ms
+            .store(d.as_millis().max(100) as u64, Ordering::Relaxed);
     }
 
     /// Starts CSV recording. Columns are the sensors known right now.
@@ -549,17 +614,25 @@ impl SensorHub {
         let mut out = std::io::BufWriter::new(file);
         let mut st = self.inner.state.lock().unwrap();
         let columns: Vec<String> = st.order.clone();
-        let mut header = String::from("Zeit,Sekunden");
+        let mut header = String::from(t!("Zeit,Sekunden", "Time,Seconds"));
         for id in &columns {
             let r = &st.stats[id].reading;
             header.push(',');
-            header.push_str(&csv_field(&format!("{} / {} [{}]", r.device, r.label, r.unit)));
+            header.push_str(&csv_field(&format!(
+                "{} / {} [{}]",
+                r.device, r.label, r.unit
+            )));
         }
-        header.push_str(",Ereignis");
+        header.push_str(t!(",Ereignis", ",Event"));
         // UTF-8 BOM so Excel shows umlauts and the degree sign correctly.
         out.write_all(b"\xEF\xBB\xBF")?;
         writeln!(out, "{header}")?;
-        st.recorder = Some(Recorder { path: path.to_path_buf(), out, columns, rows: 0 });
+        st.recorder = Some(Recorder {
+            path: path.to_path_buf(),
+            out,
+            columns,
+            rows: 0,
+        });
         Ok(())
     }
 
@@ -572,7 +645,13 @@ impl SensorHub {
     }
 
     pub fn recording_path(&self) -> Option<PathBuf> {
-        self.inner.state.lock().unwrap().recorder.as_ref().map(|r| r.path.clone())
+        self.inner
+            .state
+            .lock()
+            .unwrap()
+            .recorder
+            .as_ref()
+            .map(|r| r.path.clone())
     }
 
     pub fn shutdown(&self) {
@@ -606,15 +685,43 @@ pub fn classify_device(name: &str) -> SensorGroup {
         SensorGroup::System
     } else if has(&["gpu", "amdgpu", "nouveau", "radeon", "geforce"]) {
         SensorGroup::Gpu
-    } else if has(&["dimm", "memory", "spd", "ddr4", "ddr5", "jc42", "ee1004", "spd5118"]) {
+    } else if has(&[
+        "dimm", "memory", "spd", "ddr4", "ddr5", "jc42", "ee1004", "spd5118",
+    ]) {
         SensorGroup::Memory
     } else if has(&["cpu", "coretemp", "k10temp", "zenpower", "processor"]) {
         SensorGroup::Cpu
-    } else if has(&["s.m.a.r.t", "drive", "nvme", "ssd", "disk", "drivetemp", "sata", "ahci"]) {
+    } else if has(&[
+        "s.m.a.r.t",
+        "drive",
+        "nvme",
+        "ssd",
+        "disk",
+        "drivetemp",
+        "sata",
+        "ahci",
+    ]) {
         SensorGroup::Storage
     } else if has(&[
-        "nuvoton", "nct", "ite ", "it87", "it86", "fintek", "f718", "embedded controller", "asus", "msi",
-        "gigabyte", "asrock", "chipset", "acpi", "acpitz", "motherboard", "mainboard", "ec ", "superio",
+        "nuvoton",
+        "nct",
+        "ite ",
+        "it87",
+        "it86",
+        "fintek",
+        "f718",
+        "embedded controller",
+        "asus",
+        "msi",
+        "gigabyte",
+        "asrock",
+        "chipset",
+        "acpi",
+        "acpitz",
+        "motherboard",
+        "mainboard",
+        "ec ",
+        "superio",
     ]) {
         SensorGroup::Mainboard
     } else if has(&["system", "battery", "network"]) {
@@ -690,13 +797,19 @@ mod tests {
         assert!(!hub.session_active());
         hub.start_session("test", Some(&csv)).unwrap();
         assert!(hub.session_active());
-        assert!(hub.recording_path().is_some(), "CSV muss mit dem Test starten");
+        assert!(
+            hub.recording_path().is_some(),
+            "CSV muss mit dem Test starten"
+        );
         hub.mark_kind(EventKind::Phase, "Durchlauf 1 · Eigene Adresse");
         let p0 = hub.polls();
         while hub.polls() < p0 + 3 {
             std::thread::sleep(Duration::from_millis(20));
         }
-        hub.mark_kind(EventKind::Error, "RAM-Fehler #1 Adresse 0x1000 Bit 13 (Selbsttest)");
+        hub.mark_kind(
+            EventKind::Error,
+            "RAM-Fehler #1 Adresse 0x1000 Bit 13 (Selbsttest)",
+        );
         let p1 = hub.polls();
         while hub.polls() < p1 + 2 {
             std::thread::sleep(Duration::from_millis(20));
@@ -704,7 +817,10 @@ mod tests {
         hub.mark("Test beendet: FEHLER GEFUNDEN");
         let data = hub.stop_session().expect("Sitzung");
         assert!(!hub.session_active());
-        assert!(hub.recording_path().is_none(), "CSV muss mit dem Test enden");
+        assert!(
+            hub.recording_path().is_none(),
+            "CSV muss mit dem Test enden"
+        );
         hub.shutdown();
 
         assert_eq!(data.label, "test");
@@ -714,23 +830,47 @@ mod tests {
         assert!(s.max > s.min);
         assert!(s.points.windows(2).all(|w| w[0][0] <= w[1][0]));
         let kinds: Vec<EventKind> = data.events.iter().map(|e| e.kind).collect();
-        assert_eq!(kinds, vec![EventKind::Phase, EventKind::Error, EventKind::Info]);
+        assert_eq!(
+            kinds,
+            vec![EventKind::Phase, EventKind::Error, EventKind::Info]
+        );
         assert!(data.events[1].t >= data.events[0].t && data.events[0].t >= 0.0);
 
         let text = std::fs::read_to_string(&csv).unwrap();
         assert!(text.contains("Phase: Durchlauf 1 · Eigene Adresse"));
         assert!(text.contains("FEHLER: RAM-Fehler #1 Adresse 0x1000 Bit 13 (Selbsttest)"));
-        assert!(text.contains("Test beendet: FEHLER GEFUNDEN"), "letztes Ereignis fehlt in der CSV");
+        assert!(
+            text.contains("Test beendet: FEHLER GEFUNDEN"),
+            "letztes Ereignis fehlt in der CSV"
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
     fn classifies_devices() {
-        assert_eq!(classify_device("CPU [#0]: AMD Ryzen 7 5800X"), SensorGroup::Cpu);
-        assert_eq!(classify_device("DDR5 DIMM [#2] (BANK 0)"), SensorGroup::Memory);
-        assert_eq!(classify_device("ASUS ROG STRIX B550-F (Nuvoton NCT6798D)"), SensorGroup::Mainboard);
-        assert_eq!(classify_device("S.M.A.R.T.: Samsung SSD 980"), SensorGroup::Storage);
-        assert_eq!(classify_device("Windows Hardware Errors (WHEA)"), SensorGroup::System);
-        assert_eq!(classify_device("GPU [#0]: NVIDIA GeForce RTX 4070"), SensorGroup::Gpu);
+        assert_eq!(
+            classify_device("CPU [#0]: AMD Ryzen 7 5800X"),
+            SensorGroup::Cpu
+        );
+        assert_eq!(
+            classify_device("DDR5 DIMM [#2] (BANK 0)"),
+            SensorGroup::Memory
+        );
+        assert_eq!(
+            classify_device("ASUS ROG STRIX B550-F (Nuvoton NCT6798D)"),
+            SensorGroup::Mainboard
+        );
+        assert_eq!(
+            classify_device("S.M.A.R.T.: Samsung SSD 980"),
+            SensorGroup::Storage
+        );
+        assert_eq!(
+            classify_device("Windows Hardware Errors (WHEA)"),
+            SensorGroup::System
+        );
+        assert_eq!(
+            classify_device("GPU [#0]: NVIDIA GeForce RTX 4070"),
+            SensorGroup::Gpu
+        );
     }
 }

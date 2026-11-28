@@ -67,7 +67,15 @@ fn os_name() -> String {
         let mut buf = [0u16; 256];
         let mut size = (buf.len() * 2) as u32;
         let r = unsafe {
-            RegGetValueW(HKEY_LOCAL_MACHINE, key.as_ptr(), n.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr() as *mut _, &mut size)
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                n.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr() as *mut _,
+                &mut size,
+            )
         };
         if r != 0 {
             return String::new();
@@ -81,13 +89,19 @@ fn os_name() -> String {
     if build.parse::<u32>().unwrap_or(0) >= 22000 {
         product = product.replace("Windows 10", "Windows 11");
     }
-    format!("{product} {} (Build {build})", get("DisplayVersion")).trim().to_string()
+    format!("{product} {} (Build {build})", get("DisplayVersion"))
+        .trim()
+        .to_string()
 }
 
 #[cfg(not(windows))]
 fn os_name() -> String {
     std::fs::read_to_string("/etc/os-release")
         .ok()
-        .and_then(|s| s.lines().find(|l| l.starts_with("PRETTY_NAME=")).map(|l| l[12..].trim_matches('"').to_string()))
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("PRETTY_NAME="))
+                .map(|l| l[12..].trim_matches('"').to_string())
+        })
         .unwrap_or_else(|| std::env::consts::OS.to_string())
 }

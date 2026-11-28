@@ -5,6 +5,8 @@
 use ramforge_core::bench::{self, BenchResult};
 use ramforge_core::cpubench::{self, CpuScore};
 use ramforge_core::stress::{self, StressResult};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -87,8 +89,7 @@ impl BenchRun {
     }
     pub fn settings_text(&self) -> String {
         let s = &self.settings;
-        format!(
-            "RAMForge {} · Arbeitslast v{} (GPU v{}) · {} Threads · RAM {} MiB/Thread · CPU {:.0} s/Test · Last {} s",
+        tf!("RAMForge {} · Arbeitslast v{} (GPU v{}) · {} Threads · RAM {} MiB/Thread · CPU {:.0} s/Test · Last {} s", "RAMForge {} · workload v{} (GPU v{}) · {} threads · RAM {} MiB/thread · CPU {:.0} s/test · load {} s",
             self.app_version, s.workload_version, ramforge_gpu::WORKLOAD_VERSION, s.threads, s.ram_mib_per_thread, s.cpu_secs, s.stress_secs
         )
     }
@@ -132,7 +133,7 @@ pub fn run(
             progress(
                 sub(done, i as f32 / 3.0),
                 &format!("CPU · {}", k.name()),
-                "Single- und Multi-Thread",
+                t!("Single- und Multi-Thread", "Single and multi thread"),
             );
             run.cpu.push(cpubench::run_one(
                 *k,
@@ -158,7 +159,7 @@ pub fn run(
             bytes,
             settings.stress_secs,
             cancel,
-            &|f, l| progress(sub(d, f), "CPU+RAM-Last", l),
+            &|f, l| progress(sub(d, f), t!("CPU+RAM-Last", "CPU+RAM load"), l),
         ));
         done += 1.0;
     }
@@ -168,14 +169,18 @@ pub fn run(
             Some(m) => ramforge_gpu::run_module(&m, &|f, l| progress(sub(d, f), l, "")),
             None => ramforge_gpu::GpuResult {
                 skipped: Some(
-                    "GPU-Modul nicht installiert (RAMForge-GPU.exe neben RAMForge.exe)".into(),
+                    t!(
+                        "GPU-Modul nicht installiert (RAMForge-GPU.exe neben RAMForge.exe)",
+                        "GPU module not installed (RAMForge-GPU.exe next to RAMForge.exe)"
+                    )
+                    .into(),
                 ),
                 ..Default::default()
             },
         });
     }
     run.cancelled = cancel.load(Ordering::Relaxed);
-    progress(1.0, "Fertig", "");
+    progress(1.0, t!("Fertig", "Done"), "");
     run
 }
 

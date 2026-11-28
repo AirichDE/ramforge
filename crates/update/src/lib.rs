@@ -23,6 +23,8 @@ pub mod ui;
 
 use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
@@ -35,6 +37,13 @@ pub use fetch::Downloaded;
 /// Change here if the update location moves.
 pub const MANIFEST_URL: &str = "https://ramforge.org/update/latest.json";
 pub const SIGNATURE_URL: &str = "https://ramforge.org/update/latest.json.sig";
+/// Second source for the signed manifest: the newest GitHub release carries
+/// the same latest.json + .sig. The signature is checked either way, so the
+/// source does not need to be trusted.
+pub const MANIFEST_URL_GITHUB: &str =
+    "https://github.com/airichde/ramforge/releases/latest/download/latest.json";
+pub const SIGNATURE_URL_GITHUB: &str =
+    "https://github.com/airichde/ramforge/releases/latest/download/latest.json.sig";
 /// Shown when every download source failed.
 pub const DOWNLOAD_PAGE: &str = "https://ramforge.org/download";
 
@@ -110,6 +119,8 @@ pub enum UpdateError {
     /// No public key compiled in (development build). Nothing was contacted.
     NoKey,
     Network(String),
+    /// The server answered, but has no update information yet (HTTP 404).
+    NotPublished,
     BadSignature,
     BadManifest(String),
     Insecure(String),
@@ -129,22 +140,53 @@ pub enum UpdateError {
 
 impl std::fmt::Display for UpdateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UpdateError::NoKey => write!(f, "Update-Prüfung deaktiviert: kein Update-Schlüssel hinterlegt (Entwicklungsversion)"),
-            UpdateError::Network(e) => write!(f, "Update-Server nicht erreichbar: {e}"),
-            UpdateError::BadSignature => write!(f, "Update-Signatur ungültig – es wurde nichts installiert"),
-            UpdateError::BadManifest(e) => write!(f, "Update-Information fehlerhaft: {e}"),
-            UpdateError::Insecure(u) => write!(f, "Unsichere Update-Adresse abgelehnt (nur HTTPS): {u}"),
-            UpdateError::HashMismatch { .. } => write!(f, "Prüfsumme des Downloads stimmt nicht – es wurde nichts installiert"),
-            UpdateError::SizeMismatch { expected, actual } => {
-                write!(f, "Download hat die falsche Größe ({actual} statt {expected} Byte) – es wurde nichts installiert")
+        let text = match self {
+            UpdateError::NoKey => t!(
+                "Update-Prüfung deaktiviert: kein Update-Schlüssel hinterlegt (Entwicklungsversion)",
+                "Update check disabled: no update key built in (development build)"
+            )
+            .to_string(),
+            UpdateError::Network(e) => tf!(
+                "Keine Verbindung zum Update-Server: {e}",
+                "No connection to the update server: {e}"
+            ),
+            UpdateError::NotPublished => {
+                t!("Noch keine Version veröffentlicht", "No version published yet").to_string()
             }
-            UpdateError::Io(e) => write!(f, "Update konnte nicht geschrieben werden: {e}"),
-            UpdateError::Cancelled => write!(f, "Update abgebrochen"),
-            UpdateError::AllSourcesFailed(reasons) => {
-                write!(f, "Download fehlgeschlagen – bitte später erneut versuchen. Es wurde nichts geändert. ({})", reasons.join("; "))
-            }
-        }
+            UpdateError::BadSignature => t!(
+                "Update-Signatur ungültig – es wurde nichts installiert",
+                "Invalid update signature – nothing was installed"
+            )
+            .to_string(),
+            UpdateError::BadManifest(e) => tf!(
+                "Update-Information fehlerhaft: {e}",
+                "Faulty update information: {e}"
+            ),
+            UpdateError::Insecure(u) => tf!(
+                "Unsichere Update-Adresse abgelehnt (nur HTTPS): {u}",
+                "Insecure update address refused (HTTPS only): {u}"
+            ),
+            UpdateError::HashMismatch { .. } => t!(
+                "Prüfsumme des Downloads stimmt nicht – es wurde nichts installiert",
+                "Download checksum does not match – nothing was installed"
+            )
+            .to_string(),
+            UpdateError::SizeMismatch { expected, actual } => tf!(
+                "Download hat die falsche Größe ({actual} statt {expected} Byte) – es wurde nichts installiert",
+                "Download has the wrong size ({actual} instead of {expected} bytes) – nothing was installed"
+            ),
+            UpdateError::Io(e) => tf!(
+                "Update konnte nicht geschrieben werden: {e}",
+                "Update could not be written: {e}"
+            ),
+            UpdateError::Cancelled => t!("Update abgebrochen", "Update cancelled").to_string(),
+            UpdateError::AllSourcesFailed(reasons) => tf!(
+                "Download fehlgeschlagen – bitte später erneut versuchen. Es wurde nichts geändert. ({})",
+                "Download failed – please try again later. Nothing was changed. ({})",
+                reasons.join("; ")
+            ),
+        };
+        f.write_str(&text)
     }
 }
 
@@ -214,8 +256,9 @@ pub fn verify_manifest(
     let m: Manifest =
         serde_json::from_slice(json).map_err(|e| UpdateError::BadManifest(e.to_string()))?;
     if m.schema != 1 {
-        return Err(UpdateError::BadManifest(format!(
+        return Err(UpdateError::BadManifest(tf!(
             "unbekanntes Schema {}",
+            "unknown schema {}",
             m.schema
         )));
     }
@@ -227,32 +270,40 @@ pub fn verify_manifest(
 pub fn parse_unverified(json: &[u8]) -> Result<Manifest, String> {
     let m: Manifest = serde_json::from_slice(json).map_err(|e| e.to_string())?;
     if m.schema != 1 {
-        return Err(format!("unbekanntes Schema {}", m.schema));
+        return Err(tf!("unbekanntes Schema {}", "unknown schema {}", m.schema));
     }
-    Version::parse(&m.version).ok_or_else(|| format!("Version {} ungültig", m.version))?;
+    Version::parse(&m.version)
+        .ok_or_else(|| tf!("Version {} ungültig", "version {} invalid", m.version))?;
     Ok(m)
 }
 
 /// Step 3: decide whether the signed manifest offers a real upgrade.
 pub fn evaluate(m: Manifest, current: &str, kind: AssetKind) -> Result<CheckOutcome, UpdateError> {
-    let cur = Version::parse(current)
-        .ok_or_else(|| UpdateError::BadManifest(format!("eigene Version {current} ungültig")))?;
-    let latest = Version::parse(&m.version)
-        .ok_or_else(|| UpdateError::BadManifest(format!("Version {} ungültig", m.version)))?;
+    let cur = Version::parse(current).ok_or_else(|| {
+        UpdateError::BadManifest(tf!(
+            "eigene Version {current} ungültig",
+            "own version {current} invalid"
+        ))
+    })?;
+    let latest = Version::parse(&m.version).ok_or_else(|| {
+        UpdateError::BadManifest(tf!("Version {} ungültig", "version {} invalid", m.version))
+    })?;
     if latest <= cur {
         return Ok(CheckOutcome::UpToDate {
             latest: m.version.clone(),
         });
     }
-    let asset = m
-        .assets
-        .get(kind.key())
-        .cloned()
-        .ok_or_else(|| UpdateError::BadManifest(format!("kein Paket „{}“", kind.key())))?;
+    let asset = m.assets.get(kind.key()).cloned().ok_or_else(|| {
+        UpdateError::BadManifest(tf!("kein Paket „{}“", "no package “{}”", kind.key()))
+    })?;
     check_asset(&asset)?;
     if asset.sha256.len() != 64 || !asset.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(UpdateError::BadManifest(
-            "SHA-256 fehlt oder ist ungültig".into(),
+            t!(
+                "SHA-256 fehlt oder ist ungültig",
+                "SHA-256 missing or invalid"
+            )
+            .into(),
         ));
     }
     let urgent = Version::parse(&m.min_supported).is_some_and(|min| cur < min);
@@ -268,7 +319,11 @@ pub fn evaluate(m: Manifest, current: &str, kind: AssetKind) -> Result<CheckOutc
 pub fn check_asset(asset: &Asset) -> Result<(), UpdateError> {
     if asset.urls.is_empty() {
         return Err(UpdateError::BadManifest(
-            "Paket ohne Download-Adresse".into(),
+            t!(
+                "Paket ohne Download-Adresse",
+                "package without download address"
+            )
+            .into(),
         ));
     }
     for u in &asset.urls {
@@ -294,10 +349,10 @@ pub(crate) fn agent() -> ureq::Agent {
 
 pub(crate) fn fetch_small(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, UpdateError> {
     require_https(url)?;
-    let mut resp = agent
-        .get(url)
-        .call()
-        .map_err(|e| UpdateError::Network(e.to_string()))?;
+    let mut resp = agent.get(url).call().map_err(|e| match e {
+        ureq::Error::StatusCode(404) => UpdateError::NotPublished,
+        e => UpdateError::Network(e.to_string()),
+    })?;
     resp.body_mut()
         .with_config()
         .limit(MAX_MANIFEST)
@@ -307,7 +362,7 @@ pub(crate) fn fetch_small(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, Upd
 
 /// Steps 1–3. Contacts the server only if a public key is compiled in.
 pub fn check(current: &str, kind: AssetKind) -> Result<CheckOutcome, UpdateError> {
-    check_from(current, kind, MANIFEST_URL, SIGNATURE_URL)
+    evaluate(fetch_verified_manifest()?, current, kind)
 }
 
 pub fn check_from(
@@ -326,8 +381,23 @@ pub fn check_from(
 /// Steps 1–2 only: the manifest, after its signature was verified.
 /// Used where one manifest answers several questions (RAMForge-USB checks
 /// itself and the stick with the same download).
+/// The signed manifest from ramforge.org, or from the latest GitHub release
+/// if ramforge.org is unreachable or has none. A bad signature is never
+/// retried elsewhere.
 pub fn fetch_verified_manifest() -> Result<Manifest, UpdateError> {
-    fetch_verified_manifest_from(MANIFEST_URL, SIGNATURE_URL)
+    let primary = match fetch_verified_manifest_from(MANIFEST_URL, SIGNATURE_URL) {
+        Ok(m) => return Ok(m),
+        Err(e @ (UpdateError::NoKey | UpdateError::BadSignature | UpdateError::BadManifest(_))) => {
+            return Err(e)
+        }
+        Err(e) => e,
+    };
+    match fetch_verified_manifest_from(MANIFEST_URL_GITHUB, SIGNATURE_URL_GITHUB) {
+        Ok(m) => Ok(m),
+        Err(UpdateError::BadSignature) => Err(UpdateError::BadSignature),
+        // Report what ramforge.org said: that is the primary source.
+        Err(_) => Err(primary),
+    }
 }
 
 pub fn fetch_verified_manifest_from(

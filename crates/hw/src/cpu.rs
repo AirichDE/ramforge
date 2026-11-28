@@ -16,7 +16,9 @@ pub struct CpuInfo {
 
 pub fn read() -> CpuInfo {
     let mut info = CpuInfo {
-        logical_processors: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+        logical_processors: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
         ..Default::default()
     };
     // CPUID is a safe intrinsic on x86_64.
@@ -34,7 +36,11 @@ pub fn read() -> CpuInfo {
         let base_family = (l1.eax >> 8) & 0xF;
         let base_model = (l1.eax >> 4) & 0xF;
         info.stepping = l1.eax & 0xF;
-        info.family = if base_family == 0xF { base_family + ((l1.eax >> 20) & 0xFF) } else { base_family };
+        info.family = if base_family == 0xF {
+            base_family + ((l1.eax >> 20) & 0xFF)
+        } else {
+            base_family
+        };
         info.model = if base_family == 0x6 || base_family == 0xF {
             base_model | (((l1.eax >> 16) & 0xF) << 4)
         } else {
@@ -68,7 +74,10 @@ pub fn read() -> CpuInfo {
                     b.extend_from_slice(&x.to_le_bytes());
                 }
             }
-            info.brand = String::from_utf8_lossy(&b).trim_matches(char::from(0)).trim().to_string();
+            info.brand = String::from_utf8_lossy(&b)
+                .trim_matches(char::from(0))
+                .trim()
+                .to_string();
         }
     }
     info

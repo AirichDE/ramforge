@@ -12,4 +12,5 @@ path = "src/main.rs"
 
 [dependencies]
 ramforge-gpu = { path = "../../crates/gpu", features = ["bench"], package = "ramforge-gpu" }
+ramforge-i18n = { path = "../../crates/i18n" }
 serde_json.workspace = true

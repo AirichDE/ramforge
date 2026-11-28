@@ -22,6 +22,8 @@
 mod bootsetup;
 
 use eframe::egui::{self, Color32, RichText};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use ramforge_update::ui::{UiEvent, UpdateUi};
 use ramforge_update::{Manifest, StickState};
 use serde::{Deserialize, Serialize};
@@ -45,6 +47,8 @@ struct Settings {
     disclaimer_accepted: u32,
     check_updates: Option<bool>,
     skipped_update: String,
+    /// UI language: "auto" (default, Windows display language), "de" or "en".
+    language: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -124,7 +128,8 @@ fn list_removable() -> Vec<Drive> {
             .ok()
             .and_then(|s| serde_json::from_str::<StickInfo>(s.trim_start_matches('\u{feff}')).ok());
         let (ramforge, edition) = match info {
-            Some(i) => (Some(i.version), i.edition),
+            // Older test builds wrote e.g. "Kernel612-0.3.0".
+            Some(i) => (Some(bootsetup::clean_version(&i.version)), i.edition),
             None => (None, String::new()),
         };
         out.push(Drive {
@@ -148,14 +153,17 @@ fn list_removable() -> Vec<Drive> {
 /// The RAMForge.exe shipped next to this tool.
 fn main_exe() -> Result<PathBuf, String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let dir = me.parent().ok_or("kein Programmordner")?;
+    let dir = me
+        .parent()
+        .ok_or(t!("kein Programmordner", "no program folder"))?;
     ["RAMForge.exe", "ramforge.exe"]
         .iter()
         .map(|n| dir.join(n))
         .find(|p| p.is_file())
         .ok_or_else(|| {
-            format!(
+            tf!(
                 "RAMForge.exe liegt nicht neben RAMForge-USB.exe ({})",
+                "RAMForge.exe is not next to RAMForge-USB.exe ({})",
                 dir.display()
             )
         })
@@ -187,8 +195,9 @@ fn copy_replace(src: &std::path::Path, dest: &std::path::Path) -> Result<u64, St
     let n = std::fs::copy(src, &tmp).map_err(|e| format!("{}: {e}", dest.display()))?;
     std::fs::rename(&tmp, dest).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!(
+        tf!(
             "{} ersetzen: {e} (läuft das Programm gerade vom Stick?)",
+            "replacing {}: {e} (is the program running from the stick?)",
             dest.display()
         )
     })?;
@@ -205,7 +214,10 @@ const STICK_DIR: &str = "RAMForge";
 fn stick_path(root: &Path, name: &str) -> Result<PathBuf, String> {
     let bad = name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':']);
     if bad {
-        return Err(format!("unzulässiger Dateiname auf dem Stick: {name:?}"));
+        return Err(tf!(
+            "unzulässiger Dateiname auf dem Stick: {name:?}",
+            "invalid file name on the stick: {name:?}"
+        ));
     }
     Ok(root.join(STICK_DIR).join(name))
 }
@@ -236,8 +248,9 @@ fn install_portable(root: &str) -> Result<String, String> {
         .find(|d| d.root.eq_ignore_ascii_case(root))
     {
         if d.free > 0 && d.free < need + (1 << 20) {
-            return Err(format!(
+            return Err(tf!(
                 "Zu wenig Platz auf {root}: {} nötig, {} frei",
+                "Not enough space on {root}: {} needed, {} free",
                 gb(need),
                 gb(d.free)
             ));
@@ -255,8 +268,9 @@ fn install_portable_from(root: &Path, main: &Path, usb: &Path) -> Result<String,
         copy_replace(&g, &stick_path(root, "RAMForge-GPU.exe")?)?;
     }
     write_marker(root, env!("CARGO_PKG_VERSION"))?;
-    Ok(format!(
+    Ok(tf!(
         "RAMForge {} portabel nach {} kopiert ({:.1} MB). Start: {}",
+        "RAMForge {} copied portable to {} ({:.1} MB). Start: {}",
         env!("CARGO_PKG_VERSION"),
         dir.display(),
         (a + b) as f64 / 1e6,
@@ -307,15 +321,19 @@ fn update_portable_with(
         };
         let tmp = stick_path(root, &format!("{name}.new"))?;
         let source = download(asset, &tmp, name).map_err(|e| format!("{name}: {e}"))?;
-        sources.push(format!("{name} (Quelle: {source})"));
+        sources.push(tf!(
+            "{name} (Quelle: {source})",
+            "{name} (source: {source})"
+        ));
         std::fs::rename(&tmp, stick_path(root, name)?).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
-            format!("{name} ersetzen: {e}")
+            tf!("{name} ersetzen: {e}", "replacing {name}: {e}")
         })?;
     }
     write_marker(root, &m.version)?;
-    Ok(format!(
+    Ok(tf!(
         "Stick {} auf Version {} aktualisiert: {} – Signatur und SHA-256 geprüft",
+        "Stick {} updated to version {}: {} – signature and SHA-256 verified",
         root.display(),
         m.version,
         sources.join(", ")
@@ -404,6 +422,7 @@ impl UsbApp {
             .ok()
             .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok())
             .unwrap_or_default();
+        ramforge_i18n::init(&arg_value("--lang").unwrap_or_else(|| settings.language.clone()));
         let mut app = Self {
             settings_path,
             settings,
@@ -473,8 +492,13 @@ impl UsbApp {
         }
         *st = Online::Loading;
         drop(st);
-        self.log
-            .push("Lade aktuelle Versionsdaten von ramforge.org …".into());
+        self.log.push(
+            t!(
+                "Lade aktuelle Versionsdaten von ramforge.org …",
+                "Loading current version data from ramforge.org …"
+            )
+            .into(),
+        );
         let online = self.online.clone();
         std::thread::spawn(move || {
             let res = ramforge_update::fetch_verified_manifest();
@@ -490,11 +514,12 @@ impl UsbApp {
         self.drives = list_removable();
         for d in &self.drives {
             if !before.contains(&d.root) {
-                self.log.push(format!(
+                self.log.push(tf!(
                     "Laufwerk {} erkannt ({})",
+                    "Drive {} detected ({})",
                     d.root,
                     if d.label.is_empty() {
-                        "ohne Namen"
+                        t!("ohne Namen", "no name")
                     } else {
                         &d.label
                     }
@@ -503,7 +528,10 @@ impl UsbApp {
         }
         if let Some(sel) = &self.selected {
             if !self.drives.iter().any(|d| &d.root == sel) {
-                self.log.push(format!("Laufwerk {sel} wurde entfernt"));
+                self.log.push(tf!(
+                    "Laufwerk {sel} wurde entfernt",
+                    "Drive {sel} was removed"
+                ));
                 self.selected = None;
             }
         }
@@ -516,7 +544,10 @@ impl UsbApp {
 
     fn start_install(&mut self, root: String) {
         let job = self.job.clone();
-        *job.lock().unwrap() = Job::Running(format!("Kopiere nach {root}RAMForge …"));
+        *job.lock().unwrap() = Job::Running(tf!(
+            "Kopiere nach {root}RAMForge …",
+            "Copying to {root}RAMForge …"
+        ));
         std::thread::spawn(move || {
             let r = install_portable(&root);
             *job.lock().unwrap() = match r {
@@ -528,7 +559,7 @@ impl UsbApp {
 
     fn start_update(&mut self, root: String, m: Manifest) {
         let job = self.job.clone();
-        *job.lock().unwrap() = Job::Running("Lade Update …".into());
+        *job.lock().unwrap() = Job::Running(t!("Lade Update …", "Downloading update …").into());
         std::thread::spawn(move || {
             let j2 = job.clone();
             let r = update_portable(&root, &m, &move |t| *j2.lock().unwrap() = Job::Running(t));
@@ -542,13 +573,17 @@ impl UsbApp {
     /// Status text and colour for one drive.
     fn status(&self, d: &Drive) -> (String, Color32, String) {
         let Some(installed) = &d.ramforge else {
-            return ("kein RAMForge-Stick".into(), Color32::GRAY, String::new());
+            return (
+                t!("kein RAMForge-Stick", "not a RAMForge stick").into(),
+                Color32::GRAY,
+                String::new(),
+            );
         };
         let (text, color, tip) = self.version_status(installed);
         let prefix = if d.edition == "portable" {
-            "portabel · "
+            t!("portabel · ", "portable · ")
         } else {
-            "bootfähig · "
+            t!("bootfähig · ", "bootable · ")
         };
         (format!("{prefix}{text}"), color, tip)
     }
@@ -558,37 +593,59 @@ impl UsbApp {
             Online::NotLoaded if !self.online_enabled() => (
                 format!("Version {installed}"),
                 Color32::GRAY,
-                "Online-Prüfung ist ausgeschaltet".into(),
+                t!(
+                    "Online-Prüfung ist ausgeschaltet",
+                    "Online check is switched off"
+                )
+                .into(),
             ),
             Online::NotLoaded | Online::Loading => (
-                format!("Version {installed} · prüfe …"),
+                tf!(
+                    "Version {installed} · prüfe …",
+                    "Version {installed} · checking …"
+                ),
                 Color32::GRAY,
                 String::new(),
             ),
             Online::Failed(e) => (
-                format!("Version {installed} · Prüfung nicht möglich"),
+                tf!(
+                    "Version {installed} · Prüfung nicht möglich",
+                    "Version {installed} · check not possible"
+                ),
                 WARN,
                 e.clone(),
             ),
             Online::Ready(m) => match ramforge_update::stick_state(m, installed) {
-                StickState::UpToDate { installed } => {
-                    (format!("aktuell ({installed})"), OK, String::new())
-                }
+                StickState::UpToDate { installed } => (
+                    tf!("aktuell ({installed})", "up to date ({installed})"),
+                    OK,
+                    String::new(),
+                ),
                 StickState::Outdated {
                     installed,
                     latest,
                     urgent,
                 } => (
-                    format!("veraltet: {installed} → {latest}"),
+                    tf!(
+                        "veraltet: {installed} → {latest}",
+                        "outdated: {installed} → {latest}"
+                    ),
                     if urgent { BAD } else { WARN },
                     if urgent {
-                        "Diese Version wird nicht mehr unterstützt".into()
+                        t!(
+                            "Diese Version wird nicht mehr unterstützt",
+                            "This version is no longer supported"
+                        )
+                        .into()
                     } else {
                         String::new()
                     },
                 ),
                 StickState::Unknown { installed } => (
-                    format!("Version „{installed}“ unbekannt"),
+                    tf!(
+                        "Version „{installed}“ unbekannt",
+                        "Version “{installed}” unknown"
+                    ),
                     WARN,
                     String::new(),
                 ),
@@ -620,38 +677,37 @@ impl UsbApp {
             .and_then(|s| self.drives.iter().find(|d| &d.root == s))
             .cloned()
         else {
-            ui.label(RichText::new("Stick in der Liste auswählen. Erst dann werden die aktuellen Versionsdaten geladen.").weak());
+            ui.label(RichText::new(t!("Stick in der Liste auswählen. Erst dann werden die aktuellen Versionsdaten geladen.", "Select a stick in the list. Only then is the current version data loaded.")).weak());
             return;
         };
         egui::Frame::group(ui.style()).inner_margin(12.0).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.label(RichText::new(format!("{}  {}", d.root, d.label)).size(17.0).strong());
-            ui.label(RichText::new(format!("{} · {} gesamt · {} frei", d.fs, gb(d.size), gb(d.free))).weak());
+            ui.label(RichText::new(tf!("{} · {} gesamt · {} frei", "{} · {} total · {} free", d.fs, gb(d.size), gb(d.free))).weak());
             ui.add_space(6.0);
             let (text, color, tip) = self.status(&d);
             ui.label(RichText::new(text).size(20.0).strong().color(color)).on_hover_text(tip);
             let online = self.online.lock().unwrap().clone();
             match (&d.ramforge, &online) {
                 (None, _) => {
-                    ui.label("Auf diesem Stick ist RAMForge noch nicht eingerichtet.");
+                    ui.label(t!("Auf diesem Stick ist RAMForge noch nicht eingerichtet.", "RAMForge is not set up on this stick yet."));
                     if d.is_ventoy() {
                         ui.label(RichText::new(
-                            "Ventoy-Stick erkannt: Die Datei RAMForge-Boot-….iso kann auch einfach auf diesen Stick kopiert werden, ohne ihn neu einzurichten (Ventoy zeigt sie dann im Startmenü).",
+                            t!("Ventoy-Stick erkannt: Die Datei RAMForge-Boot-….iso kann auch einfach auf diesen Stick kopiert werden, ohne ihn neu einzurichten (Ventoy zeigt sie dann im Startmenü).", "Ventoy stick detected: the file RAMForge-Boot-….iso can simply be copied to this stick without setting it up again (Ventoy then shows it in its boot menu)."),
                         ).color(ACCENT));
                     }
                 }
                 (Some(_), Online::Ready(m)) => {
-                    ui.label(format!(
-                        "Neueste Boot-Version: {}{}",
+                    ui.label(tf!("Neueste Boot-Version: {}{}", "Latest boot version: {}{}",
                         m.version,
-                        if m.released.is_empty() { String::new() } else { format!(" (veröffentlicht {})", m.released) }
+                        if m.released.is_empty() { String::new() } else { tf!(" (veröffentlicht {})", " (released {})", m.released) }
                     ));
                     if !m.notes_url.is_empty() {
-                        ui.hyperlink_to("Was ist neu?", &m.notes_url);
+                        ui.hyperlink_to(t!("Was ist neu?", "What's new?"), &m.notes_url);
                     }
                 }
                 (Some(_), Online::Failed(e)) => {
-                    ui.label(RichText::new(format!("Aktualität nicht prüfbar: {e}")).small());
+                    ui.label(RichText::new(tf!("Aktualität nicht prüfbar: {e}", "Cannot check for updates: {e}")).small());
                 }
                 _ => {}
             }
@@ -665,27 +721,27 @@ impl UsbApp {
             };
             ui.horizontal(|ui| {
                 let copy_label = if d.ramforge.is_some() && d.edition == "portable" {
-                    "⟳ Portable Version erneut kopieren"
+                    t!("⟳ Portable Version erneut kopieren", "⟳ Copy the portable version again")
                 } else {
-                    "▶ RAMForge portabel auf den Stick kopieren"
+                    t!("▶ RAMForge portabel auf den Stick kopieren", "▶ Copy RAMForge portable to the stick")
                 };
                 let copy = egui::Button::new(RichText::new(copy_label).strong()).fill(ACCENT);
                 if ui
                     .add_enabled(!busy, copy)
-                    .on_hover_text("Kopiert RAMForge.exe und RAMForge-USB.exe nach RAMForge\\ auf dem Stick. Nichts wird gelöscht oder formatiert.")
+                    .on_hover_text(t!("Kopiert RAMForge.exe und RAMForge-USB.exe nach RAMForge\\ auf dem Stick. Nichts wird gelöscht oder formatiert.", "Copies RAMForge.exe and RAMForge-USB.exe to RAMForge\\ on the stick. Nothing is deleted or formatted."))
                     .clicked()
                 {
                     self.confirm_install = Some(d.root.clone());
                 }
                 let upd = ui
-                    .add_enabled(!busy && outdated_manifest.is_some(), egui::Button::new("Stick aktualisieren"))
-                    .on_disabled_hover_text("Aktiv, wenn auf dem Stick eine ältere Version liegt und die Versionsdaten von ramforge.org geladen sind.");
+                    .add_enabled(!busy && outdated_manifest.is_some(), egui::Button::new(t!("Stick aktualisieren", "Update stick")))
+                    .on_disabled_hover_text(t!("Aktiv, wenn auf dem Stick eine ältere Version liegt und die Versionsdaten von ramforge.org geladen sind.", "Active when the stick holds an older version and the version data from ramforge.org has been loaded."));
                 if upd.clicked() {
                     if let Some(m) = outdated_manifest.clone() {
                         self.start_update(d.root.clone(), m);
                     }
                 }
-                if ui.add_enabled(self.online_enabled(), egui::Button::new("⟳ Erneut prüfen")).clicked() {
+                if ui.add_enabled(self.online_enabled(), egui::Button::new(t!("⟳ Erneut prüfen", "⟳ Check again"))).clicked() {
                     *self.online.lock().unwrap() = Online::NotLoaded;
                     self.tool_update_offered = false;
                     self.ensure_manifest(true);
@@ -717,20 +773,23 @@ impl UsbApp {
     fn boot_section(&mut self, ui: &mut egui::Ui, d: &Drive, busy: bool) {
         ui.separator();
         ui.label(
-            RichText::new("Bootfähiger Stick (startet ohne Windows, auch mit Secure Boot)")
-                .strong(),
+            RichText::new(t!(
+                "Bootfähiger Stick (startet ohne Windows, auch mit Secure Boot)",
+                "Bootable stick (starts without Windows, also with Secure Boot)"
+            ))
+            .strong(),
         );
         let isos = bootsetup::find_isos();
         if isos.len() > 1 {
-            ui.label("Variante:");
+            ui.label(t!("Variante:", "Variant:"));
             for (p, v) in &isos {
                 let mb = std::fs::metadata(p)
                     .map(|m| m.len() / 1_000_000)
                     .unwrap_or(0);
                 let label = match v {
-                    bootsetup::Variant::Voll => format!("Voll ({mb} MB): alles, zusätzlich Grafiktreiber und GPU-Test"),
-                    bootsetup::Variant::Kompakt => format!("Kompakt ({mb} MB): RAM-Test, Sensoren, CPU/RAM-Benchmarks"),
-                    bootsetup::Variant::Ram => format!("Nur RAM-Test ({mb} MB): RAM-Test, Sensoren, SPD – ohne Benchmarks und Netzwerk"),
+                    bootsetup::Variant::Voll => tf!("Voll ({mb} MB): alles, zusätzlich Grafiktreiber und GPU-Test", "Full ({mb} MB): everything, plus graphics drivers and GPU test"),
+                    bootsetup::Variant::Kompakt => tf!("Kompakt ({mb} MB): RAM-Test, Sensoren, CPU/RAM-Benchmarks", "Compact ({mb} MB): RAM test, sensors, CPU/RAM benchmarks"),
+                    bootsetup::Variant::Ram => tf!("Nur RAM-Test ({mb} MB): RAM-Test, Sensoren, SPD – ohne Benchmarks und Netzwerk", "RAM test only ({mb} MB): RAM test, sensors, SPD – no benchmarks, no network"),
                 };
                 if ui.radio(self.boot_iso.as_ref() == Some(p), label).clicked() {
                     self.boot_iso = Some(p.clone());
@@ -742,15 +801,19 @@ impl UsbApp {
         if gpu_exe().is_some() && !ram_only {
             ui.checkbox(
                 &mut self.include_gpu,
-                "GPU-Modul (RAMForge-GPU.exe, ≈ 6 MB) für Windows mitkopieren",
+                t!(
+                    "GPU-Modul (RAMForge-GPU.exe, ≈ 6 MB) für Windows mitkopieren",
+                    "Also copy the GPU module (RAMForge-GPU.exe, ≈ 6 MB) for Windows"
+                ),
             );
         }
         let iso = self.boot_iso.clone();
         match &iso {
             Some(p) => {
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(tf!(
                         "Boot-Abbild: {} (Version {})",
+                        "Boot image: {} (version {})",
                         p.file_name().unwrap_or_default().to_string_lossy(),
                         bootsetup::iso_version(p)
                     ))
@@ -759,11 +822,17 @@ impl UsbApp {
             }
             None => {
                 ui.label(
-                    RichText::new("RAMForge-Boot-….iso liegt nicht neben RAMForge-USB.exe.")
-                        .color(WARN),
+                    RichText::new(t!(
+                        "RAMForge-Boot-….iso liegt nicht neben RAMForge-USB.exe.",
+                        "RAMForge-Boot-….iso is not next to RAMForge-USB.exe."
+                    ))
+                    .color(WARN),
                 );
                 ui.hyperlink_to(
-                    "Boot-Abbild auf ramforge.org herunterladen",
+                    t!(
+                        "Boot-Abbild auf ramforge.org herunterladen",
+                        "Download the boot image from ramforge.org"
+                    ),
                     "https://ramforge.org/download",
                 );
             }
@@ -775,7 +844,8 @@ impl UsbApp {
             _ => {
                 let slot = self.disk_check.clone();
                 let root = d.root.clone();
-                *slot.lock().unwrap() = Some((root.clone(), Err("wird geprüft …".into())));
+                *slot.lock().unwrap() =
+                    Some((root.clone(), Err(t!("wird geprüft …", "checking …").into())));
                 std::thread::spawn(move || {
                     let r = bootsetup::disk_for_letter(&root);
                     *slot.lock().unwrap() = Some((root, r));
@@ -787,13 +857,18 @@ impl UsbApp {
         let disk = match info {
             Ok(disk) => disk,
             Err(e) => {
-                ui.label(RichText::new(format!("Datenträger: {e}")).small().weak());
+                ui.label(
+                    RichText::new(tf!("Datenträger: {e}", "Disk: {e}"))
+                        .small()
+                        .weak(),
+                );
                 return;
             }
         };
         ui.label(
-            RichText::new(format!(
+            RichText::new(tf!(
                 "Datenträger {}: {} · {} · {:.1} GB · Laufwerke {}",
+                "Disk {}: {} · {} · {:.1} GB · drives {}",
                 disk.number,
                 disk.friendly_name,
                 disk.bus_type,
@@ -812,24 +887,24 @@ impl UsbApp {
         }
         ui.horizontal(|ui| {
             let can = !busy && iso.is_some() && refusal.is_none();
-            let b = egui::Button::new(RichText::new("⚠ Bootfähig einrichten – LÖSCHT ALLE DATEN").strong().color(Color32::WHITE)).fill(BAD);
-            if ui.add_enabled(can, b).on_disabled_hover_text("Nur für USB-Sticks ohne Schlüssel-Ordner, mit vorhandener Boot-ISO.").clicked() {
+            let b = egui::Button::new(RichText::new(t!("⚠ Bootfähig einrichten – LÖSCHT ALLE DATEN", "⚠ Make bootable – ERASES ALL DATA")).strong().color(Color32::WHITE)).fill(BAD);
+            if ui.add_enabled(can, b).on_disabled_hover_text(t!("Nur für USB-Sticks ohne Schlüssel-Ordner, mit vorhandener Boot-ISO.", "Only for USB sticks without a key folder, with a boot ISO present.")).clicked() {
                 self.erase = Some((disk.clone(), String::new(), false));
             }
             if d.edition == "boot" {
-                let up = egui::Button::new("Boot-Dateien aktualisieren (ohne Formatieren)");
+                let up = egui::Button::new(t!("Boot-Dateien aktualisieren (ohne Formatieren)", "Update boot files (no formatting)"));
                 if ui.add_enabled(!busy && iso.is_some(), up).clicked() {
                     if let Some(iso) = iso.clone() {
                         let job = self.job.clone();
                         let root = d.root.clone();
-                        *job.lock().unwrap() = Job::Running("Boot-Dateien werden aktualisiert …".into());
+                        *job.lock().unwrap() = Job::Running(t!("Boot-Dateien werden aktualisiert …", "Updating boot files …").into());
                         std::thread::spawn(move || {
                             let j2 = job.clone();
                             let r = bootsetup::update_in_place(Path::new(&root), &iso, &move |f, t| {
                                 *j2.lock().unwrap() = Job::Running(format!("{:.0} % · {t}", f * 100.0))
                             });
                             *job.lock().unwrap() = match r {
-                                Ok(()) => Job::Done(format!("Boot-Dateien auf {root} aktualisiert, RAMForge-data blieb erhalten")),
+                                Ok(()) => Job::Done(tf!("Boot-Dateien auf {root} aktualisiert, RAMForge-data blieb erhalten", "Boot files on {root} updated, RAMForge-data was kept")),
                                 Err(e) => Job::Failed(e),
                             };
                         });
@@ -847,29 +922,28 @@ impl UsbApp {
         let mut start = false;
         egui::Modal::new(egui::Id::unique("erase-confirm")).show(ctx, |ui| {
             ui.set_max_width(560.0);
-            ui.label(RichText::new("Stick endgültig löschen?").size(19.0).strong().color(BAD));
-            ui.label(format!(
-                "Datenträger {} · {} · {:.1} GB",
+            ui.label(RichText::new(t!("Stick endgültig löschen?", "Erase the stick permanently?")).size(19.0).strong().color(BAD));
+            ui.label(tf!("Datenträger {} · {} · {:.1} GB", "Disk {} · {} · {:.1} GB",
                 disk.number,
                 disk.friendly_name,
                 disk.size as f64 / 1e9
             ));
-            ui.label(RichText::new(format!(
-                "Alle Partitionen und Daten auf {} werden unwiderruflich gelöscht. Danach enthält der Stick RAMForge (bootfähig, Secure Boot) und die portable Windows-Version.",
+            ui.label(RichText::new(tf!("Alle Partitionen und Daten auf {} werden unwiderruflich gelöscht. Danach enthält der Stick RAMForge (bootfähig, Secure Boot) und die portable Windows-Version.", "All partitions and data on {} will be erased irrevocably. Afterwards the stick holds RAMForge (bootable, Secure Boot) and the portable Windows version.",
                 disk.letters.iter().map(|l| format!("{l}:")).collect::<Vec<_>>().join(", ")
             )));
             ui.add_space(6.0);
-            ui.checkbox(ack, "Ich habe geprüft, dass das der richtige Stick ist, und brauche keine Daten mehr darauf.");
+            ui.checkbox(ack, t!("Ich habe geprüft, dass das der richtige Stick ist, und brauche keine Daten mehr darauf.", "I have checked that this is the right stick and I no longer need any data on it."));
             ui.horizontal(|ui| {
-                ui.label("Zur Bestätigung LÖSCHEN eintippen:");
+                ui.label(t!("Zur Bestätigung LÖSCHEN eintippen:", "Type ERASE to confirm:"));
                 ui.text_edit_singleline(typed);
             });
             ui.horizontal(|ui| {
-                let ok = *ack && typed.trim() == "LÖSCHEN";
-                if ui.add_enabled(ok, egui::Button::new(RichText::new("Löschen und einrichten").strong().color(Color32::WHITE)).fill(BAD)).clicked() {
+                // The word to type follows the UI language; both are accepted.
+                let ok = *ack && matches!(typed.trim(), "LÖSCHEN" | "ERASE");
+                if ui.add_enabled(ok, egui::Button::new(RichText::new(t!("Löschen und einrichten", "Erase and set up")).strong().color(Color32::WHITE)).fill(BAD)).clicked() {
                     start = true;
                 }
-                if ui.button("Abbrechen").clicked() {
+                if ui.button(t!("Abbrechen", "Cancel")).clicked() {
                     close = true;
                 }
             });
@@ -887,8 +961,13 @@ impl UsbApp {
         let (Some(iso), Ok(main), Ok(usb)) =
             (self.boot_iso.clone(), main_exe(), std::env::current_exe())
         else {
-            *self.job.lock().unwrap() =
-                Job::Failed("Boot-ISO oder RAMForge.exe nicht gefunden".into());
+            *self.job.lock().unwrap() = Job::Failed(
+                t!(
+                    "Boot-ISO oder RAMForge.exe nicht gefunden",
+                    "Boot ISO or RAMForge.exe not found"
+                )
+                .into(),
+            );
             return;
         };
         let job = self.job.clone();
@@ -899,7 +978,7 @@ impl UsbApp {
         } else {
             None
         };
-        *job.lock().unwrap() = Job::Running("Wird vorbereitet …".into());
+        *job.lock().unwrap() = Job::Running(t!("Wird vorbereitet …", "Preparing …").into());
         std::thread::spawn(move || {
             let j2 = job.clone();
             let r = bootsetup::setup(
@@ -918,8 +997,7 @@ impl UsbApp {
                 },
             );
             *job.lock().unwrap() = match r {
-                Ok(root) => Job::Done(format!(
-                    "Fertig: {root} ist bootfähig. Im Bootmenü des PCs (oft F8, F11 oder F12) den Stick wählen – Secure Boot kann an bleiben."
+                Ok(root) => Job::Done(tf!("Fertig: {root} ist bootfähig. Im Bootmenü des PCs (oft F8, F11 oder F12) den Stick wählen – Secure Boot kann an bleiben.", "Done: {root} is bootable. Select the stick in the PC's boot menu (often F8, F11 or F12) – Secure Boot can stay on."
                 )),
                 Err(e) => Job::Failed(e),
             };
@@ -963,7 +1041,10 @@ impl eframe::App for UsbApp {
                 _ => None,
             };
             if let Some(e) = failed {
-                let line = format!("Versionsdaten nicht abrufbar: {e}");
+                let line = tf!(
+                    "Versionsdaten nicht abrufbar: {e}",
+                    "Version data not available: {e}"
+                );
                 if self.log.last() != Some(&line) {
                     self.log.push(line);
                 }
@@ -976,19 +1057,31 @@ impl eframe::App for UsbApp {
                 ui.add_space(-8.0);
                 ui.label(RichText::new("Forge USB").size(24.0).strong());
                 ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).weak());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (label, next, tip) = if ramforge_i18n::is_en() {
+                        ("DE", ramforge_i18n::Lang::De, "Auf Deutsch umschalten")
+                    } else {
+                        ("EN", ramforge_i18n::Lang::En, "Switch to English")
+                    };
+                    if ui.button(label).on_hover_text(tip).clicked() {
+                        ramforge_i18n::set(next);
+                        self.settings.language = ramforge_i18n::code().into();
+                        self.persist();
+                    }
+                });
             });
-            ui.label("Richtet einen USB-Stick mit der bootfähigen RAMForge-Variante ein und hält ihn aktuell, ohne ihn neu zu formatieren.");
+            ui.label(t!("Richtet einen USB-Stick mit der bootfähigen RAMForge-Variante ein und hält ihn aktuell, ohne ihn neu zu formatieren.", "Sets up a USB stick with the bootable RAMForge version and keeps it up to date without formatting it again."));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("USB-Sticks").strong());
-                ui.label(RichText::new("(wird alle 2 Sekunden aktualisiert)").small().weak());
+                ui.label(RichText::new(t!("USB-Sticks", "USB sticks")).strong());
+                ui.label(RichText::new(t!("(wird alle 2 Sekunden aktualisiert)", "(refreshed every 2 seconds)")).small().weak());
             });
             if self.drives.is_empty() {
-                ui.label(RichText::new("Kein USB-Stick gefunden. Stick einstecken, er erscheint automatisch.").weak());
+                ui.label(RichText::new(t!("Kein USB-Stick gefunden. Stick einstecken, er erscheint automatisch.", "No USB stick found. Plug in a stick, it appears automatically.")).weak());
             }
             let mut clicked = None;
             egui::Grid::new("drives").num_columns(5).striped(true).spacing([14.0, 6.0]).show(ui, |ui| {
-                for h in ["", "Laufwerk", "Größe / frei", "Dateisystem", "RAMForge"] {
+                for h in ["", t!("Laufwerk", "Drive"), t!("Größe / frei", "Size / free"), t!("Dateisystem", "File system"), "RAMForge"] {
                     ui.label(RichText::new(h).weak());
                 }
                 ui.end_row();
@@ -1021,16 +1114,16 @@ impl eframe::App for UsbApp {
             ui.add_space(10.0);
             ui.separator();
             let mut on = self.online_enabled();
-            if ui.checkbox(&mut on, "Beim Auswählen eines Sticks online nach Updates suchen").changed() {
+            if ui.checkbox(&mut on, t!("Beim Auswählen eines Sticks online nach Updates suchen", "Check online for updates when a stick is selected")).changed() {
                 self.settings.check_updates = Some(on);
                 self.persist();
             }
-            ui.label(RichText::new("Fingerabdrücke der Update-Schlüssel (SHA-256):").small());
+            ui.label(RichText::new(t!("Fingerabdrücke der Update-Schlüssel (SHA-256):", "Fingerprints of the update keys (SHA-256):")).small());
             for (name, fp) in ramforge_update::key::fingerprints() {
                 ui.label(RichText::new(format!("{name:<8} {fp}")).small().monospace());
             }
             if ramforge_update::key::is_placeholder() {
-                ui.label(RichText::new("Entwicklungsversion: Test- bzw. Platzhalterschlüssel").small().color(WARN));
+                ui.label(RichText::new(t!("Entwicklungsversion: Test- bzw. Platzhalterschlüssel", "Development build: test or placeholder keys")).small().color(WARN));
             }
             self.log.extend(self.updater.take_log().into_iter().map(|(_, m)| m));
             for l in self.log.iter().rev().take(6) {
@@ -1042,18 +1135,17 @@ impl eframe::App for UsbApp {
         if let Some(root) = self.confirm_install.clone() {
             egui::Modal::new(egui::Id::unique("usb-confirm")).show(&ctx, |ui| {
                 ui.set_max_width(520.0);
-                ui.label(RichText::new(format!("RAMForge auf {root} kopieren?")).size(17.0).strong());
-                ui.label(format!(
-                    "Kopiert RAMForge.exe und RAMForge-USB.exe nach {root}RAMForge\\ und legt dort die Kennung stick.json an. \
-                     Vorhandene Dateien auf dem Stick bleiben unangetastet, nichts wird formatiert."
+                ui.label(RichText::new(tf!("RAMForge auf {root} kopieren?", "Copy RAMForge to {root}?")).size(17.0).strong());
+                ui.label(tf!("Kopiert RAMForge.exe und RAMForge-USB.exe nach {root}RAMForge\\ und legt dort die Kennung stick.json an. \
+                     Vorhandene Dateien auf dem Stick bleiben unangetastet, nichts wird formatiert.", "Copies RAMForge.exe and RAMForge-USB.exe to {root}RAMForge\\ and creates the marker stick.json there. Existing files on the stick stay untouched, nothing is formatted."
                 ));
-                ui.label(RichText::new("Danach RAMForge an jedem Windows-PC direkt vom Stick starten. Berichte und Logs landen in RAMForge\\RAMForge-data.").small().weak());
+                ui.label(RichText::new(t!("Danach RAMForge an jedem Windows-PC direkt vom Stick starten. Berichte und Logs landen in RAMForge\\RAMForge-data.", "Then start RAMForge on any Windows PC directly from the stick. Reports and logs go to RAMForge\\RAMForge-data.")).small().weak());
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new("Kopieren").fill(ACCENT)).clicked() {
+                    if ui.add(egui::Button::new(t!("Kopieren", "Copy")).fill(ACCENT)).clicked() {
                         self.confirm_install = None;
                         self.start_install(root.clone());
                     }
-                    if ui.button("Abbrechen").clicked() {
+                    if ui.button(t!("Abbrechen", "Cancel")).clicked() {
                         self.confirm_install = None;
                     }
                 });
@@ -1143,13 +1235,20 @@ fn main() -> eframe::Result {
             .or_else(bootsetup::find_iso);
         let res = (|| -> Result<String, String> {
             if !ok {
-                return Err("--confirm-erase <gleiche Nummer> fehlt".into());
+                return Err(t!(
+                    "--confirm-erase <gleiche Nummer> fehlt",
+                    "--confirm-erase <same number> missing"
+                )
+                .into());
             }
-            let num: u32 = n
-                .parse()
-                .map_err(|_| "ungültige Datenträgernummer".to_string())?;
+            let num: u32 = n.parse().map_err(|_| {
+                t!("ungültige Datenträgernummer", "invalid disk number").to_string()
+            })?;
             let disk = bootsetup::disk_by_number(num)?;
-            let iso = iso.ok_or("keine Boot-ISO gefunden (--iso)")?;
+            let iso = iso.ok_or(t!(
+                "keine Boot-ISO gefunden (--iso)",
+                "no boot ISO found (--iso)"
+            ))?;
             let usb = std::env::current_exe().map_err(|e| e.to_string())?;
             bootsetup::setup(
                 &bootsetup::SetupInput {
@@ -1167,6 +1266,54 @@ fn main() -> eframe::Result {
         })();
         match res {
             Ok(root) => println!("Fertig: {root}"),
+            Err(e) => {
+                eprintln!("Fehler: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+    if let Some(root) = arg_value("--update-boot") {
+        // Same as the "Boot-Dateien aktualisieren" button: no formatting,
+        // RAMForge-data and foreign files stay. Same refusals as the set-up.
+        #[cfg(windows)]
+        unsafe {
+            windows_sys::Win32::System::Console::AttachConsole(
+                windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
+            );
+        }
+        let root = if root.ends_with('\\') {
+            root
+        } else {
+            format!("{root}\\")
+        };
+        let res = (|| -> Result<(), String> {
+            let iso = arg_value("--iso")
+                .map(PathBuf::from)
+                .or_else(bootsetup::find_iso)
+                .ok_or(t!(
+                    "keine Boot-ISO gefunden (--iso)",
+                    "no boot ISO found (--iso)"
+                ))?;
+            let disk = bootsetup::disk_for_letter(&root)?;
+            let allow_virtual = std::env::args().any(|a| a == "--allow-virtual-disk");
+            if let Some(why) = bootsetup::refusal(&disk, allow_virtual) {
+                return Err(why);
+            }
+            if !std::path::Path::new(&root)
+                .join("RAMForge")
+                .join("stick.json")
+                .exists()
+            {
+                return Err(tf!("{root} ist kein RAMForge-Boot-Stick (RAMForge\\stick.json fehlt). Zum Einrichten --setup-disk verwenden.", "{root} is not a RAMForge boot stick (RAMForge\\stick.json missing). Use --setup-disk to set one up."
+                ));
+            }
+            bootsetup::update_in_place(std::path::Path::new(&root), &iso, &|f, t| {
+                println!("{:>3.0} % {t}", f * 100.0)
+            })
+        })();
+        match res {
+            Ok(()) => println!("Fertig: Boot-Dateien auf {root} aktualisiert"),
             Err(e) => {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);

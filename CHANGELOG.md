@@ -2,6 +2,30 @@
 
 Deutsche Fassung zuerst, English version below.
 
+## 0.3.1 – 28.11.2026
+
+### Neu
+- **Englisch**: RAMForge, RAMForge-USB und Berichte gibt es jetzt auf Deutsch und Englisch. Windows folgt der Systemsprache, umschaltbar oben rechts (DE | EN), die Wahl wird gespeichert.
+- **Boot-Stick startet auf Englisch**; im Startmenü gibt es eigene Einträge auf Deutsch, die Sprache lässt sich auch gleich im ersten Dialog wählen.
+- **Neuer Linux-Kernel 6.12** im Boot-System: läuft jetzt auch auf neuen Grafikkarten wie NVIDIA RTX 40, mit aktueller Firmware und Mesa 25.
+- **Ausweich-Grafik**: findet Linux keinen passenden Grafiktreiber, startet RAMForge trotzdem (einfache Grafik über den Bildschirmspeicher der Firmware), auch auf echten PCs.
+- **Anzeigegröße** einstellbar (Strg + Plus/Minus/0 oder unter „Über“), passt sich auf kleinen Bildschirmen automatisch an.
+- **RAM-Hersteller** wird aus der Teilenummer erkannt, wenn das Mainboard keinen meldet.
+- **Updates** kommen notfalls auch über GitHub, wenn ramforge.org nicht erreichbar ist (Signatur wird immer geprüft).
+- Fehlerbildschirm im Boot-System zeigt Grafikkarte und Treiber, für schnellere Hilfe, auf Deutsch und Englisch.
+
+### Hinweis
+- Größen der Boot-Abbilder: *Voll* ≈ 447 MB, *Kompakt* ≈ 365 MB (vorher 250 MB, wegen der Grafik-Firmware für NVIDIA und Intel zum neuen Kernel), *Nur RAM-Test* ≈ 231 MB.
+
+### Behoben
+- Boot-System startete auf PCs mit RTX-40-Grafikkarten nicht.
+- Kopfleiste verdeckte bei großer Anzeige die Tabs; breite Tabellen waren rechts abgeschnitten (jetzt seitlich scrollbar).
+- Haftungsausschluss-Dialog auf kleinen Bildschirmen abgeschnitten.
+- Unsinnige Sensorwerte (z. B. −128 °C an unbelegten Anschlüssen) werden ausgeblendet.
+- Links („Was ist neu?“, Datenschutz, Download-Seite) öffnen jetzt den Browser; Kopieren und Einfügen funktioniert wieder.
+- Ehrlichere Meldung, wenn noch keine Version veröffentlicht ist, statt „Server nicht erreichbar“.
+- Copyright-Hinweise aller Linux-Pakete liegen wieder im Boot-System.
+
 ## 0.3.0 – 25.11.2026
 
 **Erste öffentliche Version.**
@@ -36,6 +60,30 @@ Deutsche Fassung zuerst, English version below.
 ---
 
 ## English
+
+## 0.3.1 – 2026-11-28
+
+### New
+- **English**: RAMForge, RAMForge-USB and the reports are now available in German and English. Windows follows the system language; switch at the top right (DE | EN), the choice is saved.
+- **Boot stick starts in English**; the boot menu has German entries, and the language can also be chosen in the very first dialog.
+- **New Linux kernel 6.12** in the boot system: now also runs on new graphics cards such as NVIDIA RTX 40, with current firmware and Mesa 25.
+- **Fallback graphics**: if Linux finds no suitable graphics driver, RAMForge still starts (simple graphics on the firmware framebuffer), on real PCs too.
+- **Display size** adjustable (Ctrl + plus/minus/0 or under "About"), adapts automatically on small screens.
+- **RAM manufacturer** is derived from the part number when the mainboard reports none.
+- **Updates** also come via GitHub if ramforge.org is unreachable (the signature is always checked).
+- The boot error screen shows the graphics card and driver, for faster help, in German and English.
+
+### Note
+- Boot image sizes: *Full* ≈ 447 MB, *Compact* ≈ 365 MB (was 250 MB, because of the NVIDIA and Intel graphics firmware for the new kernel), *RAM test only* ≈ 231 MB.
+
+### Fixed
+- Boot system did not start on PCs with RTX 40 graphics cards.
+- Top bar covered the tabs at large display sizes; wide tables were cut off on the right (now scroll sideways).
+- Disclaimer dialog cut off on small screens.
+- Nonsense sensor values (e.g. −128 °C on unused inputs) are hidden.
+- Links ("What's new?", privacy, download page) open the browser again; copy and paste works again.
+- Clearer message when no version has been published yet, instead of "server not reachable".
+- Copyright notices of all Linux packages are included in the boot system again.
 
 ## 0.3.0 – 2026-11-25
 

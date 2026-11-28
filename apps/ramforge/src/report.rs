@@ -4,6 +4,8 @@ use ramforge_core::bench::BenchResult;
 use ramforge_core::{MemError, RunSummary};
 use ramforge_hw::sensors::{EventKind, SensorEvent, SensorStat, SessionData};
 use ramforge_hw::SystemInfo;
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::Serialize;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -115,16 +117,16 @@ pub struct ReportInput<'a> {
 pub fn build(i: ReportInput) -> Report {
     let mut system = i.system.clone();
     if i.anonymize {
-        system.hostname = "(ausgeblendet)".into();
+        system.hostname = t!("(ausgeblendet)", "(hidden)").into();
         if let Some(s) = system.smbios.as_mut() {
             for m in &mut s.memory {
                 if !m.serial.is_empty() {
-                    m.serial = "(ausgeblendet)".into();
+                    m.serial = t!("(ausgeblendet)", "(hidden)").into();
                 }
             }
         }
         for (_, s) in &mut system.spd {
-            s.serial = "(ausgeblendet)".into();
+            s.serial = t!("(ausgeblendet)", "(hidden)").into();
         }
     }
     Report {
@@ -161,9 +163,9 @@ pub fn build(i: ReportInput) -> Report {
 
 fn session_title(r: &SessionReport) -> &'static str {
     if r.kind == "bench" {
-        "Sensorverlauf Benchmark"
+        t!("Sensorverlauf Benchmark", "Sensor history benchmark")
     } else {
-        "Sensorverlauf RAM-Test"
+        t!("Sensorverlauf RAM-Test", "Sensor history RAM test")
     }
 }
 
@@ -279,15 +281,19 @@ fn session_html(r: &SessionReport) -> String {
     let mut o = String::new();
     let _ = write!(
         o,
-        "<section><h2>{}</h2><p class=\"sub\">Beginn {} · Dauer {} · {} Sensoren{}</p>",
-        session_title(r),
-        r.started.format("%d.%m.%Y %H:%M:%S"),
-        crate::chart::fmt_secs(r.duration_secs),
-        r.series.len(),
-        r.csv
-            .as_ref()
-            .map(|c| format!(" · CSV: <code>{}</code>", esc(c)))
-            .unwrap_or_default()
+        "{}",
+        tf!(
+            "<section><h2>{}</h2><p class=\"sub\">Beginn {} · Dauer {} · {} Sensoren{}</p>",
+            "<section><h2>{}</h2><p class=\"sub\">Start {} · duration {} · {} sensors{}</p>",
+            session_title(r),
+            r.started.format("%d.%m.%Y %H:%M:%S"),
+            crate::chart::fmt_secs(r.duration_secs),
+            r.series.len(),
+            r.csv
+                .as_ref()
+                .map(|c| format!(" · CSV: <code>{}</code>", esc(c)))
+                .unwrap_or_default()
+        )
     );
     // Same colours as in the program.
     let charted: Vec<(String, &SessionSeriesReport)> = r
@@ -315,10 +321,10 @@ fn session_html(r: &SessionReport) -> String {
             .map(|(c, s)| (c.clone(), *s))
             .collect();
         let title = match u {
-            "°C" => "Temperatur (°C)".to_string(),
-            "V" => "Spannung (V)".to_string(),
-            "%" => "Auslastung (%)".to_string(),
-            "MHz" => "Takt (MHz)".to_string(),
+            "°C" => t!("Temperatur (°C)", "Temperature (°C)").to_string(),
+            "V" => t!("Spannung (V)", "Voltage (V)").to_string(),
+            "%" => t!("Auslastung (%)", "Load (%)").to_string(),
+            "MHz" => t!("Takt (MHz)", "Clock (MHz)").to_string(),
             other => other.to_string(),
         };
         o.push_str(&svg_chart(&title, &items, &r.events, r.duration_secs));
@@ -334,10 +340,13 @@ fn session_html(r: &SessionReport) -> String {
         o.push_str("</p>");
     }
     if charted.is_empty() {
-        o.push_str("<p class=\"sub\">Keine Diagramm-Sensoren aufgezeichnet.</p>");
+        o.push_str(t!(
+            "<p class=\"sub\">Keine Diagramm-Sensoren aufgezeichnet.</p>",
+            "<p class=\"sub\">No chart sensors recorded.</p>"
+        ));
     }
-    o.push_str("<p class=\"legend\"><span><i class=\"mk-phase\"></i>Testphase</span><span><i class=\"mk-err\"></i>RAM-Fehler</span></p>");
-    o.push_str("<table><tr><th>Gruppe</th><th>Gerät</th><th>Sensor</th><th>Min</th><th>Max</th><th>Ø</th><th>Werte</th></tr>");
+    o.push_str(t!("<p class=\"legend\"><span><i class=\"mk-phase\"></i>Testphase</span><span><i class=\"mk-err\"></i>RAM-Fehler</span></p>", "<p class=\"legend\"><span><i class=\"mk-phase\"></i>Test phase</span><span><i class=\"mk-err\"></i>RAM error</span></p>"));
+    o.push_str(t!("<table><tr><th>Gruppe</th><th>Gerät</th><th>Sensor</th><th>Min</th><th>Max</th><th>Ø</th><th>Werte</th></tr>", "<table><tr><th>Group</th><th>Device</th><th>Sensor</th><th>Min</th><th>Max</th><th>Avg</th><th>Values</th></tr>"));
     for s in &r.series {
         let _ = write!(
             o,
@@ -348,7 +357,10 @@ fn session_html(r: &SessionReport) -> String {
     }
     o.push_str("</table>");
     if !r.events.is_empty() {
-        o.push_str("<h2 style=\"margin-top:16px\">Ereignisse</h2><table>");
+        o.push_str(t!(
+            "<h2 style=\"margin-top:16px\">Ereignisse</h2><table>",
+            "<h2 style=\"margin-top:16px\">Events</h2><table>"
+        ));
         for e in r.events.iter().take(300) {
             let cls = if e.kind == EventKind::Error {
                 " class=\"bad-t\""
@@ -380,9 +392,9 @@ pub fn duration(secs: f64) -> String {
 pub fn outcome_text(o: ramforge_core::Outcome) -> &'static str {
     match o {
         ramforge_core::Outcome::Passed => "BESTANDEN",
-        ramforge_core::Outcome::Failed => "FEHLER GEFUNDEN",
+        ramforge_core::Outcome::Failed => t!("FEHLER GEFUNDEN", "ERRORS FOUND"),
         ramforge_core::Outcome::Cancelled => "ABGEBROCHEN",
-        ramforge_core::Outcome::Aborted => "NICHT GESTARTET",
+        ramforge_core::Outcome::Aborted => t!("NICHT GESTARTET", "NOT STARTED"),
     }
 }
 
@@ -397,13 +409,27 @@ fn esc(s: &str) -> String {
 fn system_lines(r: &Report) -> Vec<(String, String)> {
     let s = &r.system;
     let mut v = vec![
-        ("Betriebssystem".into(), s.os.clone()),
-        ("Rechnername".into(), s.hostname.clone()),
+        (
+            t!("Betriebssystem", "Operating system").into(),
+            s.os.clone(),
+        ),
+        (
+            t!("Rechnername", "Computer name").into(),
+            s.hostname.clone(),
+        ),
         (
             "CPU".into(),
-            format!("{} ({} Threads)", s.cpu.brand, s.cpu.logical_processors),
+            tf!(
+                "{} ({} Threads)",
+                "{} ({} threads)",
+                s.cpu.brand,
+                s.cpu.logical_processors
+            ),
         ),
-        ("Arbeitsspeicher".into(), gib(s.memory.total_bytes)),
+        (
+            t!("Arbeitsspeicher", "Memory").into(),
+            gib(s.memory.total_bytes),
+        ),
     ];
     if let Some(b) = &s.smbios {
         v.push((
@@ -419,9 +445,10 @@ fn system_lines(r: &Report) -> Vec<(String, String)> {
         ));
         let used = b.memory.iter().filter(|m| m.is_installed()).count();
         v.push((
-            "Speicherplätze".into(),
-            format!(
+            t!("Speicherplätze", "Memory slots").into(),
+            tf!(
                 "{used} von {} belegt",
+                "{used} of {} in use",
                 b.memory_slots_total.max(b.memory.len() as u32)
             ),
         ));
@@ -459,15 +486,19 @@ pub fn to_txt(r: &Report) -> String {
     let mut o = String::new();
     let _ = writeln!(
         o,
-        "RAMForge {} – Bericht vom {}",
-        r.version,
-        r.generated.format("%d.%m.%Y %H:%M:%S")
+        "{}",
+        tf!(
+            "RAMForge {} – Bericht vom {}",
+            "RAMForge {} – report of {}",
+            r.version,
+            r.generated.format("%d.%m.%Y %H:%M:%S")
+        )
     );
     let _ = writeln!(o, "{}", "=".repeat(72));
     for (k, v) in system_lines(r) {
         let _ = writeln!(o, "{k:<18} {v}");
     }
-    let _ = writeln!(o, "\nModule (Steckplatz | Größe | Typ | Nenn-/Ist-Takt | Spannung | Hersteller | Teil | Serie)");
+    let _ = writeln!(o, "{}", tf!("\nModule (Steckplatz | Größe | Typ | Nenn-/Ist-Takt | Spannung | Hersteller | Teil | Serie)", "\nModules (slot | size | type | rated/actual speed | voltage | manufacturer | part | serial)"));
     for m in module_rows(r) {
         let _ = writeln!(o, "  {}", m.join(" | "));
     }
@@ -475,24 +506,40 @@ pub fn to_txt(r: &Report) -> String {
         let _ = writeln!(o, "\nRAM-Test: {} – {}", outcome_text(t.outcome), t.message);
         let _ = writeln!(
             o,
-            "  Beginn {}  Dauer {}",
-            t.started.format("%d.%m.%Y %H:%M:%S"),
-            duration(t.duration_secs)
+            "{}",
+            tf!(
+                "  Beginn {}  Dauer {}",
+                "  Start {}  Duration {}",
+                t.started.format("%d.%m.%Y %H:%M:%S"),
+                duration(t.duration_secs)
+            )
         );
         let _ = writeln!(
             o,
-            "  Getestet {}  Threads {}  Durchläufe {}  Tests {}  Speicher gesperrt: {}",
-            gib(t.tested_bytes),
-            t.threads,
-            t.passes_completed,
-            t.tests_completed,
-            if t.memory_locked { "ja" } else { "nein" }
+            "{}",
+            tf!(
+                "  Getestet {}  Threads {}  Durchläufe {}  Tests {}  Speicher gesperrt: {}",
+                "  Tested {}  Threads {}  Passes {}  Tests {}  Memory locked: {}",
+                gib(t.tested_bytes),
+                t.threads,
+                t.passes_completed,
+                t.tests_completed,
+                if t.memory_locked {
+                    t!("ja", "yes")
+                } else {
+                    t!("nein", "no")
+                }
+            )
         );
-        let _ = writeln!(o, "  Fehler gesamt: {}", t.errors);
+        let _ = writeln!(
+            o,
+            "{}",
+            tf!("  Fehler gesamt: {}", "  Errors in total: {}", t.errors)
+        );
         for e in r.errors.iter().take(50) {
             let _ = writeln!(
                 o,
-                "  {} {:<26} Durchl.{} T{:<2} 0x{:016X} soll {:016X} ist {:016X} xor {:016X}{}",
+                "{}", tf!("  {} {:<26} Durchl.{} T{:<2} 0x{:016X} soll {:016X} ist {:016X} xor {:016X}{}", "  {} {:<26} pass {} T{:<2} 0x{:016X} expected {:016X} got {:016X} xor {:016X}{}",
                 e.time.format("%H:%M:%S"),
                 e.test,
                 e.pass + 1,
@@ -501,8 +548,7 @@ pub fn to_txt(r: &Report) -> String {
                 e.expected,
                 e.actual,
                 e.xor(),
-                if e.simulated { " (Selbsttest)" } else { "" }
-            );
+                if e.simulated { t!(" (Selbsttest)", " (self-test)") } else { "" }));
         }
         let bits: Vec<String> = r
             .bit_histogram
@@ -525,20 +571,18 @@ pub fn to_txt(r: &Report) -> String {
                 None => {
                     let _ = writeln!(
                         o,
-                        "  {:<34} {:<9} 1T {:>9.1} {u:<6} {:>5} Pkt   {}T {:>9.1} {u:<6} {:>5} Pkt   Skalierung {:.1}x   {}",
+                        "{}", tf!("  {:<34} {:<9} 1T {:>9.1} {u:<6} {:>5} Pkt   {}T {:>9.1} {u:<6} {:>5} Pkt   Skalierung {:.1}x   {}", "  {:<34} {:<9} 1T {:>9.1} {u:<6} {:>5} pts   {}T {:>9.1} {u:<6} {:>5} pts   scaling {:.1}x   {}",
                         c.kind.name(), c.variant, c.single_raw, c.single_points, c.threads, c.multi_raw, c.multi_points, c.scaling,
-                        if c.errors > 0 { format!("{} RECHENFEHLER", c.errors) } else { "Prüfsummen ok".into() },
-                        u = c.kind.unit()
-                    );
+                        if c.errors > 0 { tf!("{} RECHENFEHLER", "{} CALCULATION ERRORS", c.errors) } else { t!("Prüfsummen ok", "checksums ok").into() },
+                        u = c.kind.unit()));
                 }
             }
         }
         if let Some(st) = &run.stress {
             let _ = writeln!(
                 o,
-                "  CPU+RAM-Last: Ø {:.1} GB/s, min {:.1}, max {:.1}, Stabilität {:.0} %, {} Fehler, {:.0} s",
-                st.avg_gbs, st.min_gbs, st.max_gbs, st.stability() * 100.0, st.errors, st.secs
-            );
+                "{}", tf!("  CPU+RAM-Last: Ø {:.1} GB/s, min {:.1}, max {:.1}, Stabilität {:.0} %, {} Fehler, {:.0} s", "  CPU+RAM load: avg {:.1} GB/s, min {:.1}, max {:.1}, stability {:.0} %, {} errors, {:.0} s",
+                st.avg_gbs, st.min_gbs, st.max_gbs, st.stability() * 100.0, st.errors, st.secs));
         }
         if let Some(g) = &run.gpu {
             match &g.skipped {
@@ -548,9 +592,8 @@ pub fn to_txt(r: &Report) -> String {
                 None => {
                     let _ = writeln!(
                         o,
-                        "  GPU {} ({}, {}): VRAM {:.0} GB/s, FP32 {:.2} TFLOPS, zur GPU {:.1} GB/s, zum PC {:.1} GB/s, {} Fehler",
-                        g.adapter, g.backend, g.driver, g.vram_gbs, g.fp32_tflops, g.upload_gbs, g.download_gbs, g.errors
-                    );
+                        "{}", tf!("  GPU {} ({}, {}): VRAM {:.0} GB/s, FP32 {:.2} TFLOPS, zur GPU {:.1} GB/s, zum PC {:.1} GB/s, {} Fehler", "  GPU {} ({}, {}): VRAM {:.0} GB/s, FP32 {:.2} TFLOPS, to GPU {:.1} GB/s, to PC {:.1} GB/s, {} errors",
+                        g.adapter, g.backend, g.driver, g.vram_gbs, g.fp32_tflops, g.upload_gbs, g.download_gbs, g.errors));
                 }
             }
         }
@@ -564,8 +607,14 @@ pub fn to_txt(r: &Report) -> String {
         );
         let _ = writeln!(
             o,
-            "  Lesen {:.2} GB/s  Schreiben {:.2} GB/s  Kopieren {:.2} GB/s",
-            b.read_gbs, b.write_gbs, b.copy_gbs
+            "{}",
+            tf!(
+                "  Lesen {:.2} GB/s  Schreiben {:.2} GB/s  Kopieren {:.2} GB/s",
+                "  Read {:.2} GB/s  Write {:.2} GB/s  Copy {:.2} GB/s",
+                b.read_gbs,
+                b.write_gbs,
+                b.copy_gbs
+            )
         );
         for (size, ns) in &b.latency {
             let _ = writeln!(o, "  Latenz {:>8}: {:.1} ns", size_label(*size), ns);
@@ -590,10 +639,14 @@ pub fn to_txt(r: &Report) -> String {
     for r in &r.sensor_sessions {
         let _ = writeln!(
             o,
-            "\n{} (Beginn {}, Dauer {}):",
-            session_title(r),
-            r.started.format("%H:%M:%S"),
-            crate::chart::fmt_secs(r.duration_secs)
+            "{}",
+            tf!(
+                "\n{} (Beginn {}, Dauer {}):",
+                "\n{} (start {}, duration {}):",
+                session_title(r),
+                r.started.format("%H:%M:%S"),
+                crate::chart::fmt_secs(r.duration_secs)
+            )
         );
         if let Some(c) = &r.csv {
             let _ = writeln!(o, "  CSV: {c}");
@@ -601,7 +654,12 @@ pub fn to_txt(r: &Report) -> String {
         let _ = writeln!(
             o,
             "  {:<16} {:<34} {:<30} {:>12} {:>12} {:>12}",
-            "Gruppe", "Gerät", "Sensor", "Min", "Max", "Ø"
+            t!("Gruppe", "Group"),
+            t!("Gerät", "Device"),
+            "Sensor",
+            "Min",
+            "Max",
+            "Ø"
         );
         for s in &r.series {
             let _ = writeln!(
@@ -623,11 +681,10 @@ pub fn to_txt(r: &Report) -> String {
         if errs > 0 {
             let _ = writeln!(
                 o,
-                "  {errs} RAM-Fehler während der Aufzeichnung (Zeitpunkte in CSV und HTML-Bericht)"
-            );
+                "{}", tf!("  {errs} RAM-Fehler während der Aufzeichnung (Zeitpunkte in CSV und HTML-Bericht)", "  {errs} RAM errors during the recording (times in the CSV and HTML report)"));
         }
     }
-    let _ = writeln!(o, "\nHinweis: Ein bestandener Test beweist nicht, dass der Speicher fehlerfrei ist. Siehe DISCLAIMER.md.");
+    let _ = writeln!(o, "{}", tf!("\nHinweis: Ein bestandener Test beweist nicht, dass der Speicher fehlerfrei ist. Siehe DISCLAIMER.md.", "\nNote: a passed test does not prove that the memory is free of errors. See DISCLAIMER.md."));
     o
 }
 
@@ -666,7 +723,10 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
         date = r.generated.format("%d.%m.%Y %H:%M:%S"),
         ver = esc(&r.version),
         anon = if r.anonymized {
-            " · Rechnername und Seriennummern ausgeblendet"
+            t!(
+                " · Rechnername und Seriennummern ausgeblendet",
+                " · computer name and serial numbers hidden"
+            )
         } else {
             ""
         },
@@ -678,7 +738,7 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
     o.push_str("</table></section>");
     let rows = module_rows(r);
     if !rows.is_empty() {
-        o.push_str("<section><h2>Speichermodule</h2><table><tr><th>Steckplatz</th><th>Größe</th><th>Typ</th><th>Nenn/Ist</th><th>Spannung</th><th>Hersteller</th><th>Teilenummer</th><th>Seriennr.</th></tr>");
+        o.push_str(t!("<section><h2>Speichermodule</h2><table><tr><th>Steckplatz</th><th>Größe</th><th>Typ</th><th>Nenn/Ist</th><th>Spannung</th><th>Hersteller</th><th>Teilenummer</th><th>Seriennr.</th></tr>", "<section><h2>Memory modules</h2><table><tr><th>Slot</th><th>Size</th><th>Type</th><th>Rated/actual</th><th>Voltage</th><th>Manufacturer</th><th>Part number</th><th>Serial no.</th></tr>"));
         for m in rows {
             o.push_str("<tr>");
             for c in m {
@@ -696,20 +756,19 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
         };
         let _ = write!(
             o,
-            "<section><h2>RAM-Test</h2><p><span class=\"badge {cls}\">{}</span> &nbsp;{}</p><table class=\"kv\">\
+            "{}", tf!("<section><h2>RAM-Test</h2><p><span class=\"badge {cls}\">{}</span> &nbsp;{}</p><table class=\"kv\">\
              <tr><td>Beginn</td><td>{}</td></tr><tr><td>Dauer</td><td>{}</td></tr><tr><td>Getestet</td><td>{} mit {} Threads</td></tr>\
-             <tr><td>Durchläufe / Tests</td><td>{} / {}</td></tr><tr><td>Speicher gesperrt</td><td>{}</td></tr><tr><td>Fehler</td><td>{}</td></tr></table>",
+             <tr><td>Durchläufe / Tests</td><td>{} / {}</td></tr><tr><td>Speicher gesperrt</td><td>{}</td></tr><tr><td>Fehler</td><td>{}</td></tr></table>", "<section><h2>RAM test</h2><p><span class=\"badge {cls}\">{}</span> &nbsp;{}</p><table class=\"kv\"><tr><td>Start</td><td>{}</td></tr><tr><td>Duration</td><td>{}</td></tr><tr><td>Tested</td><td>{} with {} threads</td></tr><tr><td>Passes / tests</td><td>{} / {}</td></tr><tr><td>Memory locked</td><td>{}</td></tr><tr><td>Errors</td><td>{}</td></tr></table>",
             outcome_text(t.outcome), esc(&t.message), t.started.format("%d.%m.%Y %H:%M:%S"), duration(t.duration_secs),
             gib(t.tested_bytes), t.threads, t.passes_completed, t.tests_completed,
-            if t.memory_locked { "ja" } else { "nein (Ergebnis bedingt aussagekräftig)" }, t.errors
-        );
+            if t.memory_locked { t!("ja", "yes") } else { t!("nein (Ergebnis bedingt aussagekräftig)", "no (result only partly meaningful)") }, t.errors));
         if !r.errors.is_empty() {
-            o.push_str("<h2 style=\"margin-top:16px\">Fehler</h2><table><tr><th>Zeit</th><th>Test</th><th>Durchl.</th><th>Thread</th><th>Adresse</th><th>Soll</th><th>Ist</th><th>XOR</th></tr>");
+            o.push_str(t!("<h2 style=\"margin-top:16px\">Fehler</h2><table><tr><th>Zeit</th><th>Test</th><th>Durchl.</th><th>Thread</th><th>Adresse</th><th>Soll</th><th>Ist</th><th>XOR</th></tr>", "<h2 style=\"margin-top:16px\">Errors</h2><table><tr><th>Time</th><th>Test</th><th>Pass</th><th>Thread</th><th>Address</th><th>Expected</th><th>Actual</th><th>XOR</th></tr>"));
             for e in r.errors.iter().take(200) {
                 let _ = write!(
                     o,
                     "<tr><td>{}</td><td>{}{}</td><td>{}</td><td>{}</td><td><code>0x{:016X}</code></td><td><code>{:016X}</code></td><td><code>{:016X}</code></td><td><code>{:016X}</code></td></tr>",
-                    e.time.format("%H:%M:%S"), esc(&e.test), if e.simulated { " (Selbsttest)" } else { "" }, e.pass + 1, e.thread,
+                    e.time.format("%H:%M:%S"), esc(&e.test), if e.simulated { t!(" (Selbsttest)", " (self-test)") } else { "" }, e.pass + 1, e.thread,
                     e.address, e.expected, e.actual, e.xor()
                 );
             }
@@ -725,7 +784,7 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
         );
         if !run.cpu.is_empty() {
             let (st, mt) = run.cpu_points();
-            let _ = write!(o, "<p><b>CPU:</b> {st} Punkte (1 Thread) · {mt} Punkte (alle Threads)</p><table><tr><th>Test</th><th>Befehlssatz</th><th>1 Thread</th><th>Alle Threads</th><th>Punkte</th><th>Skalierung</th><th>Prüfung</th></tr>");
+            let _ = write!(o, "{}", tf!("<p><b>CPU:</b> {st} Punkte (1 Thread) · {mt} Punkte (alle Threads)</p><table><tr><th>Test</th><th>Befehlssatz</th><th>1 Thread</th><th>Alle Threads</th><th>Punkte</th><th>Skalierung</th><th>Prüfung</th></tr>", "<p><b>CPU:</b> {st} points (1 thread) · {mt} points (all threads)</p><table><tr><th>Test</th><th>Instruction set</th><th>1 thread</th><th>All threads</th><th>Points</th><th>Scaling</th><th>Check</th></tr>"));
             for c in &run.cpu {
                 match &c.skipped {
                     Some(why) => {
@@ -743,7 +802,7 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
                             "<tr><td>{}</td><td>{}</td><td class=n>{:.1} {u}</td><td class=n>{:.1} {u}</td><td class=n>{} / {}</td><td class=n>{:.1}×</td><td{}>{}</td></tr>",
                             esc(c.kind.name()), esc(&c.variant), c.single_raw, c.multi_raw, c.single_points, c.multi_points, c.scaling,
                             if c.errors > 0 { " class=\"bad-t\"" } else { "" },
-                            if c.errors > 0 { format!("{} Rechenfehler", c.errors) } else { "ok".into() },
+                            if c.errors > 0 { tf!("{} Rechenfehler", "{} calculation errors", c.errors) } else { "ok".into() },
                             u = c.kind.unit()
                         );
                     }
@@ -754,10 +813,9 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
         if let Some(st) = &run.stress {
             let _ = write!(
                 o,
-                "<p><b>CPU+RAM unter Last:</b> Ø {:.1} GB/s · min {:.1} · max {:.1} · Stabilität {:.0} % · <span{}>{} Fehler</span> · {:.0} s</p>",
+                "{}", tf!("<p><b>CPU+RAM unter Last:</b> Ø {:.1} GB/s · min {:.1} · max {:.1} · Stabilität {:.0} % · <span{}>{} Fehler</span> · {:.0} s</p>", "<p><b>CPU+RAM under load:</b> avg {:.1} GB/s · min {:.1} · max {:.1} · stability {:.0} % · <span{}>{} errors</span> · {:.0} s</p>",
                 st.avg_gbs, st.min_gbs, st.max_gbs, st.stability() * 100.0,
-                if st.errors > 0 { " style=\"color:var(--bad)\"" } else { "" }, st.errors, st.secs
-            );
+                if st.errors > 0 { " style=\"color:var(--bad)\"" } else { "" }, st.errors, st.secs));
         }
         if let Some(g) = &run.gpu {
             match &g.skipped {
@@ -767,9 +825,8 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
                 None => {
                     let _ = write!(
                         o,
-                        "<p><b>GPU:</b> {} ({}, {}) · VRAM {:.0} GB/s · FP32 {:.2} TFLOPS · zur GPU {:.1} GB/s · zum PC {:.1} GB/s · {} Fehler</p>",
-                        esc(&g.adapter), esc(&g.backend), esc(&g.driver), g.vram_gbs, g.fp32_tflops, g.upload_gbs, g.download_gbs, g.errors
-                    );
+                        "{}", tf!("<p><b>GPU:</b> {} ({}, {}) · VRAM {:.0} GB/s · FP32 {:.2} TFLOPS · zur GPU {:.1} GB/s · zum PC {:.1} GB/s · {} Fehler</p>", "<p><b>GPU:</b> {} ({}, {}) · VRAM {:.0} GB/s · FP32 {:.2} TFLOPS · to GPU {:.1} GB/s · to PC {:.1} GB/s · {} errors</p>",
+                        esc(&g.adapter), esc(&g.backend), esc(&g.driver), g.vram_gbs, g.fp32_tflops, g.upload_gbs, g.download_gbs, g.errors));
                 }
             }
         }
@@ -778,21 +835,24 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
     if let Some(b) = &r.benchmark {
         let _ = write!(
             o,
-            "<section><h2>Benchmark</h2><table class=\"kv\"><tr><td>Lesen</td><td>{:.2} GB/s</td></tr><tr><td>Schreiben</td><td>{:.2} GB/s</td></tr><tr><td>Kopieren</td><td>{:.2} GB/s</td></tr>",
-            b.read_gbs, b.write_gbs, b.copy_gbs
-        );
+            "{}", tf!("<section><h2>Benchmark</h2><table class=\"kv\"><tr><td>Lesen</td><td>{:.2} GB/s</td></tr><tr><td>Schreiben</td><td>{:.2} GB/s</td></tr><tr><td>Kopieren</td><td>{:.2} GB/s</td></tr>", "<section><h2>Benchmark</h2><table class=\"kv\"><tr><td>Read</td><td>{:.2} GB/s</td></tr><tr><td>Write</td><td>{:.2} GB/s</td></tr><tr><td>Copy</td><td>{:.2} GB/s</td></tr>",
+            b.read_gbs, b.write_gbs, b.copy_gbs));
         for (size, ns) in &b.latency {
             let _ = write!(
                 o,
-                "<tr><td>Latenz {}</td><td>{:.1} ns</td></tr>",
-                size_label(*size),
-                ns
+                "{}",
+                tf!(
+                    "<tr><td>Latenz {}</td><td>{:.1} ns</td></tr>",
+                    "<tr><td>Latency {}</td><td>{:.1} ns</td></tr>",
+                    size_label(*size),
+                    ns
+                )
             );
         }
         o.push_str("</table></section>");
     }
     if !r.sensors.is_empty() {
-        o.push_str("<section><h2>Sensoren</h2><table><tr><th>Gruppe</th><th>Gerät</th><th>Sensor</th><th>Aktuell</th><th>Min</th><th>Max</th><th>Ø</th><th></th></tr>");
+        o.push_str(t!("<section><h2>Sensoren</h2><table><tr><th>Gruppe</th><th>Gerät</th><th>Sensor</th><th>Aktuell</th><th>Min</th><th>Max</th><th>Ø</th><th></th></tr>", "<section><h2>Sensors</h2><table><tr><th>Group</th><th>Device</th><th>Sensor</th><th>Current</th><th>Min</th><th>Max</th><th>Avg</th><th></th></tr>"));
         for s in &r.sensors {
             let _ = write!(
                 o,
@@ -803,7 +863,10 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
         o.push_str("</table></section>");
     }
     if !r.events.is_empty() {
-        o.push_str("<section><h2>Ereignisse</h2><table>");
+        o.push_str(t!(
+            "<section><h2>Ereignisse</h2><table>",
+            "<section><h2>Events</h2><table>"
+        ));
         for e in &r.events {
             let _ = write!(
                 o,
@@ -817,7 +880,7 @@ svg .ct{{fill:var(--fg);font-size:12px;font-weight:600}} svg .phase{{stroke:var(
     for sr in &r.sensor_sessions {
         o.push_str(&session_html(sr));
     }
-    o.push_str("<p class=\"foot\">Ein bestandener Test beweist nicht, dass der Speicher fehlerfrei ist. Nutzung auf eigene Gefahr, ohne Gewähr. RAMForge ist freie Software unter der GPL-3.0-or-later.</p></main></body></html>");
+    o.push_str(t!("<p class=\"foot\">Ein bestandener Test beweist nicht, dass der Speicher fehlerfrei ist. Nutzung auf eigene Gefahr, ohne Gewähr. RAMForge ist freie Software unter der GPL-3.0-or-later.</p></main></body></html>", "<p class=\"foot\">A passed test does not prove that the memory is free of errors. Use at your own risk, without warranty. RAMForge is free software under the GPL-3.0-or-later.</p></main></body></html>"));
     o
 }
 

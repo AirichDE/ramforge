@@ -12,12 +12,19 @@
 param(
     [ValidateSet("all", "image", "app", "iso", "test")]
     [string]$Stage = "all",
-    [string]$Version = "0.3.0",
+    [string]$Version = "0.3.1",
     [string[]]$Tests = @("bios", "uefi", "uefi-sb", "usb-sb"),
     [ValidateSet("full", "compact", "ram")]
     [string[]]$Editions = @("full", "compact", "ram"),
     # Boot test of another image in out\, e.g. RAMForge-Boot-RAM-0.3.0.iso
-    [string]$TestIso = ""
+    [string]$TestIso = "",
+    # Boot menu hotkey pressed during the test, e.g. "g" = Grafik-Sicherheitsmodus
+    [string]$TestKey = "",
+    # QEMU graphics for the test: virtio (default), std, ramfb (no Linux driver)
+    [string]$TestVga = "",
+    # "new" (default) = kernel 6.12 + firmware + Mesa from bookworm-backports; "stable" = 6.1
+    [ValidateSet("stable", "new")]
+    [string]$Kernel = "new"
 )
 $ErrorActionPreference = "Continue"   # docker writes progress to stderr
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
@@ -41,10 +48,12 @@ if ($Stage -in "all", "image") {
 }
 if ($Stage -in "all", "app") { Invoke-Builder "build-app.sh" }
 if ($Stage -in "all", "iso") {
-    foreach ($e in $Editions) { Invoke-Builder "build-iso.sh" @("--privileged", "-e", "RAMFORGE_EDITION=$e") }
+    foreach ($e in $Editions) { Invoke-Builder "build-iso.sh" @("--privileged", "-e", "RAMFORGE_EDITION=$e", "-e", "RAMFORGE_KERNEL=$Kernel") }
 }
 if ($Stage -eq "test") {
     $isoArg = if ($TestIso) { @("-e", "ISO=/out/$TestIso") } else { @() }
+    if ($TestKey) { $isoArg += @("-e", "KEY=$TestKey") }
+    if ($TestVga) { $isoArg += @("-e", "VGA=$TestVga") }
     foreach ($t in $Tests) { Invoke-Builder "test-boot.sh" (@("--privileged") + $isoArg) @($t) }
 }
 Get-ChildItem $out -File | Format-Table Name, Length, LastWriteTime

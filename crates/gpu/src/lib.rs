@@ -6,6 +6,8 @@
 //! If no usable GPU or driver exists, `run` returns a result with `skipped`
 //! set; it never panics.
 
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 
 /// Bumped when a workload changes (scores comparable only with equal version).
@@ -32,7 +34,6 @@ pub struct GpuResult {
     pub skipped: Option<String>,
 }
 
-
 /// Name of the separate GPU module next to RAMForge.exe / in /usr/local/bin.
 #[cfg(windows)]
 pub const MODULE_FILE: &str = "RAMForge-GPU.exe";
@@ -42,11 +43,16 @@ pub const MODULE_FILE: &str = "ramforge-gpu";
 /// Where the GPU module is installed, if it is.
 pub fn find_module() -> Option<std::path::PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(d) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+    if let Some(d) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
         dirs.push(d);
     }
     dirs.push("/usr/local/bin".into());
-    dirs.into_iter().map(|d| d.join(MODULE_FILE)).find(|p| p.is_file())
+    dirs.into_iter()
+        .map(|d| d.join(MODULE_FILE))
+        .find(|p| p.is_file())
 }
 
 /// Runs the GPU module and reads its JSON result. Progress lines on stderr
@@ -55,7 +61,11 @@ pub fn run_module(module: &std::path::Path, progress: &dyn Fn(f32, &str)) -> Gpu
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
     let mut cmd = Command::new(module);
-    cmd.arg("--json").stdout(Stdio::piped()).stderr(Stdio::piped());
+    // The module process shows its progress texts in the caller's language.
+    cmd.env("RAMFORGE_LANG", ramforge_i18n::code());
+    cmd.arg("--json")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -63,7 +73,15 @@ pub fn run_module(module: &std::path::Path, progress: &dyn Fn(f32, &str)) -> Gpu
     }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return GpuResult { skipped: Some(format!("GPU-Modul startet nicht: {e}")), ..Default::default() },
+        Err(e) => {
+            return GpuResult {
+                skipped: Some(tf!(
+                    "GPU-Modul startet nicht: {e}",
+                    "GPU module does not start: {e}"
+                )),
+                ..Default::default()
+            }
+        }
     };
     if let Some(err) = child.stderr.take() {
         for line in BufReader::new(err).lines().map_while(Result::ok) {
@@ -75,10 +93,20 @@ pub fn run_module(module: &std::path::Path, progress: &dyn Fn(f32, &str)) -> Gpu
     }
     let out = match child.wait_with_output() {
         Ok(o) => o,
-        Err(e) => return GpuResult { skipped: Some(format!("GPU-Modul: {e}")), ..Default::default() },
+        Err(e) => {
+            return GpuResult {
+                skipped: Some(tf!("GPU-Modul: {e}", "GPU module: {e}")),
+                ..Default::default()
+            }
+        }
     };
-    serde_json::from_slice(&out.stdout)
-        .unwrap_or_else(|e| GpuResult { skipped: Some(format!("GPU-Modul lieferte kein Ergebnis ({e})")), ..Default::default() })
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|e| GpuResult {
+        skipped: Some(tf!(
+            "GPU-Modul lieferte kein Ergebnis ({e})",
+            "GPU module returned no result ({e})"
+        )),
+        ..Default::default()
+    })
 }
 
 #[cfg(feature = "bench")]
@@ -89,7 +117,7 @@ mod bench {
 
     const WG: u32 = 256;
     const ITERS: u32 = 4096;
-const CHAINS: u32 = 8;
+    const CHAINS: u32 = 8;
     const CHECK: usize = 4096;
 
     const SHADER: &str = r#"
@@ -130,12 +158,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
 
     fn wait(device: &wgpu::Device) -> Result<(), String> {
         device
-            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(Duration::from_secs(60)) })
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(Duration::from_secs(60)),
+            })
             .map(|_| ())
-            .map_err(|e| format!("GPU antwortet nicht: {e}"))
+            .map_err(|e| tf!("GPU antwortet nicht: {e}", "GPU does not respond: {e}"))
     }
 
-    fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, src: &wgpu::Buffer, bytes: u64) -> Result<(Vec<u8>, f64), String> {
+    fn read_back(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        src: &wgpu::Buffer,
+        bytes: u64,
+    ) -> Result<(Vec<u8>, f64), String> {
         let rb = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
             size: bytes,
@@ -151,8 +187,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
             let _ = tx.send(r);
         });
         wait(device)?;
-        rx.recv().map_err(|e| e.to_string())?.map_err(|e| format!("Zurücklesen: {e}"))?;
-        let data = rb.get_mapped_range(..).map_err(|e| format!("Zurücklesen: {e:?}"))?.to_vec();
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| tf!("Zurücklesen: {e}", "reading back: {e}"))?;
+        let data = rb
+            .get_mapped_range(..)
+            .map_err(|e| tf!("Zurücklesen: {e:?}", "reading back: {e:?}"))?
+            .to_vec();
         let secs = t0.elapsed().as_secs_f64();
         rb.unmap();
         Ok((data, secs))
@@ -174,44 +215,87 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     pub fn run(cancel: &AtomicBool, progress: &dyn Fn(f32, &str)) -> GpuResult {
         match pollster::block_on(run_inner(cancel, progress)) {
             Ok(r) => r,
-            Err(e) => GpuResult { skipped: Some(e), ..Default::default() },
+            Err(e) => GpuResult {
+                skipped: Some(e),
+                ..Default::default()
+            },
         }
     }
 
-    async fn run_inner(cancel: &AtomicBool, progress: &dyn Fn(f32, &str)) -> Result<GpuResult, String> {
-        progress(0.0, "GPU wird gesucht");
+    async fn run_inner(
+        cancel: &AtomicBool,
+        progress: &dyn Fn(f32, &str),
+    ) -> Result<GpuResult, String> {
+        progress(0.0, t!("GPU wird gesucht", "Looking for the GPU"));
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() })
             .await
-            .map_err(|_| "GPU-Benchmark nicht verfügbar: keine passende Grafikkarte oder kein Treiber (Vulkan/DirectX 12)".to_string())?;
+            .map_err(|_| t!("GPU-Benchmark nicht verfügbar: keine passende Grafikkarte oder kein Treiber (Vulkan/DirectX 12)", "GPU benchmark not available: no suitable graphics card or driver (Vulkan/DirectX 12)").to_string())?;
         let info = adapter.get_info();
         let mut r = GpuResult {
             adapter: info.name.clone(),
             backend: format!("{:?}", info.backend),
-            driver: format!("{} {}", info.driver, info.driver_info).trim().to_string(),
+            driver: format!("{} {}", info.driver, info.driver_info)
+                .trim()
+                .to_string(),
             device_type: format!("{:?}", info.device_type),
             ..Default::default()
         };
         if info.device_type == wgpu::DeviceType::Cpu {
-            r.skipped = Some(format!("GPU-Benchmark nicht verfügbar: nur Software-Rendering ({})", info.name));
+            r.skipped = Some(tf!(
+                "GPU-Benchmark nicht verfügbar: nur Software-Rendering ({})",
+                "GPU benchmark not available: software rendering only ({})",
+                info.name
+            ));
             return Ok(r);
         }
         let limits = adapter.limits();
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor { label: Some("ramforge"), required_limits: limits.clone(), ..Default::default() })
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("ramforge"),
+                required_limits: limits.clone(),
+                ..Default::default()
+            })
             .await
-            .map_err(|e| format!("GPU-Benchmark nicht verfügbar: {e}"))?;
-        let size = (256u64 << 20).min(limits.max_buffer_size).min(limits.max_storage_buffer_binding_size as u64) / 4 * 4;
+            .map_err(|e| {
+                tf!(
+                    "GPU-Benchmark nicht verfügbar: {e}",
+                    "GPU benchmark not available: {e}"
+                )
+            })?;
+        let size = (256u64 << 20)
+            .min(limits.max_buffer_size)
+            .min(limits.max_storage_buffer_binding_size as u64)
+            / 4
+            * 4;
         r.buffer_bytes = size;
         let words = (size / 4) as usize;
         let host = pattern(words);
-        let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
-        let src = device.create_buffer(&wgpu::BufferDescriptor { label: Some("src"), size, usage, mapped_at_creation: false });
-        let dst = device.create_buffer(&wgpu::BufferDescriptor { label: Some("dst"), size, usage, mapped_at_creation: false });
+        let usage = wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST;
+        let src = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("src"),
+            size,
+            usage,
+            mapped_at_creation: false,
+        });
+        let dst = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("dst"),
+            size,
+            usage,
+            mapped_at_creation: false,
+        });
 
         // Upload: host -> GPU, best of 3.
-        progress(0.1, "GPU · Übertragung zur Grafikkarte");
+        progress(
+            0.1,
+            t!(
+                "GPU · Übertragung zur Grafikkarte",
+                "GPU · transfer to the graphics card"
+            ),
+        );
         let mut best = f64::MAX;
         for _ in 0..3 {
             let t0 = Instant::now();
@@ -226,7 +310,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
         }
 
         // VRAM copy, best of 5 after a warm-up; read + write traffic counted.
-        progress(0.3, "GPU · VRAM-Bandbreite");
+        progress(0.3, t!("GPU · VRAM-Bandbreite", "GPU · VRAM bandwidth"));
         let mut best = f64::MAX;
         for round in 0..6 {
             let t0 = Instant::now();
@@ -243,12 +327,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
         r.vram_gbs = 2.0 * size as f64 / best / 1e9;
 
         // Download + verification of the copied data, best of 2.
-        progress(0.5, "GPU · Übertragung zum PC und Prüfung");
+        progress(
+            0.5,
+            t!(
+                "GPU · Übertragung zum PC und Prüfung",
+                "GPU · transfer to the PC and check"
+            ),
+        );
         let mut best = f64::MAX;
         for _ in 0..2 {
             let (data, secs) = read_back(&device, &queue, &dst, size)?;
             best = best.min(secs);
-            r.errors = data.chunks_exact(4).zip(host.chunks_exact(4)).filter(|(a, b)| a != b).count() as u64;
+            r.errors = data
+                .chunks_exact(4)
+                .zip(host.chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count() as u64;
         }
         r.download_gbs = size as f64 / best / 1e9;
         if cancel.load(Ordering::Relaxed) {
@@ -256,8 +350,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
         }
 
         // FP32 compute: 4 FMA chains x ITERS per invocation.
-        progress(0.7, "GPU · FP32-Rechenleistung");
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("fma"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+        progress(0.7, t!("GPU · FP32-Rechenleistung", "GPU · FP32 compute"));
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fma"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("fma"),
             layout: None,
@@ -268,7 +365,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
         });
         let max_x = limits.max_compute_workgroups_per_dimension.max(1);
         let groups_total: u32 = 16_384; // 4 Mi invocations
-        let (gx, gy) = if groups_total <= max_x { (groups_total, 1) } else { (max_x, groups_total.div_ceil(max_x)) };
+        let (gx, gy) = if groups_total <= max_x {
+            (groups_total, 1)
+        } else {
+            (max_x, groups_total.div_ceil(max_x))
+        };
         let invocations = gx as u64 * gy as u64 * WG as u64;
         let out_bytes = (invocations * 4).min(size);
         let out = device.create_buffer(&wgpu::BufferDescriptor {
@@ -280,7 +381,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: out.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: out.as_entire_binding(),
+            }],
         });
         let mut best = f64::MAX;
         for round in 0..4 {
@@ -308,7 +412,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
                 r.errors += 1;
             }
         }
-        progress(1.0, "GPU · fertig");
+        progress(1.0, t!("GPU · fertig", "GPU · done"));
         Ok(r)
     }
 
@@ -330,12 +434,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
                 Some(why) => assert!(why.contains("nicht verfügbar"), "{why}"),
                 None => {
                     assert_eq!(r.errors, 0, "{r:?}");
-                    assert!(r.vram_gbs > 1.0 && r.fp32_tflops > 0.01 && r.upload_gbs > 0.1 && r.download_gbs > 0.1, "{r:?}");
+                    assert!(
+                        r.vram_gbs > 1.0
+                            && r.fp32_tflops > 0.01
+                            && r.upload_gbs > 0.1
+                            && r.download_gbs > 0.1,
+                        "{r:?}"
+                    );
                 }
             }
         }
     }
-
 }
 #[cfg(feature = "bench")]
 pub use bench::run;

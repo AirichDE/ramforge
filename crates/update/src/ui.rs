@@ -2,6 +2,8 @@
 
 use crate::{selfreplace, AssetKind, CheckOutcome, Update, UpdateError};
 use egui::{Align2, RichText, Vec2};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,14 +29,22 @@ fn apply(shared: &Mutex<Shared>, res: Result<CheckOutcome, UpdateError>, skipped
         Ok(CheckOutcome::Available(u)) if u.manifest.version == skipped && !u.urgent => {
             s.log.push((
                 false,
-                format!("Update {} verfügbar (übersprungen)", u.manifest.version),
+                tf!(
+                    "Update {} verfügbar (übersprungen)",
+                    "Update {} available (skipped)",
+                    u.manifest.version
+                ),
             ));
             s.state = State::Idle;
         }
         Ok(CheckOutcome::Available(u)) => {
             s.log.push((
                 false,
-                format!("Update {} verfügbar, Signatur gültig", u.manifest.version),
+                tf!(
+                    "Update {} verfügbar, Signatur gültig",
+                    "Update {} available, signature valid",
+                    u.manifest.version
+                ),
             ));
             s.state = State::Available(u);
             s.open = true;
@@ -42,7 +52,10 @@ fn apply(shared: &Mutex<Shared>, res: Result<CheckOutcome, UpdateError>, skipped
         Ok(CheckOutcome::UpToDate { latest }) => {
             s.log.push((
                 false,
-                format!("Keine neuere Version (aktuell veröffentlicht: {latest})"),
+                tf!(
+                    "Keine neuere Version (aktuell veröffentlicht: {latest})",
+                    "No newer version (currently released: {latest})"
+                ),
             ));
             s.state = State::Idle;
         }
@@ -143,9 +156,11 @@ impl UpdateUi {
                 Ok((dest, got)) => {
                     s.log.push((
                         false,
-                        format!(
+                        tf!(
                             "Update {} geladen (Quelle: {}), SHA-256 geprüft",
-                            u.manifest.version, got.source
+                            "Update {} downloaded (source: {}), SHA-256 verified",
+                            u.manifest.version,
+                            got.source
                         ),
                     ));
                     s.state = State::Ready(u, dest);
@@ -170,7 +185,7 @@ impl UpdateUi {
             let mut close = false;
             let title = match &s.state {
                 State::Failed(_) => "Update",
-                _ => "Update verfügbar",
+                _ => t!("Update verfügbar", "Update available"),
             };
             egui::Window::new(title)
                 .collapsible(false)
@@ -181,51 +196,51 @@ impl UpdateUi {
                     match &s.state {
                         State::Available(u) => {
                             let m = &u.manifest;
-                            ui.label(RichText::new(format!("{} {} ist verfügbar", self.product, m.version)).size(17.0).strong());
-                            ui.label(format!("Installiert: {} · veröffentlicht: {}", self.current, m.released));
+                            ui.label(RichText::new(tf!("{} {} ist verfügbar", "{} {} is available", self.product, m.version)).size(17.0).strong());
+                            ui.label(tf!("Installiert: {} · veröffentlicht: {}", "Installed: {} · released: {}", self.current, m.released));
                             if u.urgent {
-                                ui.label(RichText::new("Diese Version wird nicht mehr unterstützt. Ein Update wird dringend empfohlen.").color(egui::Color32::from_rgb(0xE8, 0x9A, 0x2C)));
+                                ui.label(RichText::new(t!("Diese Version wird nicht mehr unterstützt. Ein Update wird dringend empfohlen.", "This version is no longer supported. An update is strongly recommended.")).color(egui::Color32::from_rgb(0xE8, 0x9A, 0x2C)));
                             }
                             if !m.notes_url.is_empty() {
-                                ui.hyperlink_to("Was ist neu?", &m.notes_url);
+                                ui.hyperlink_to(t!("Was ist neu?", "What's new?"), &m.notes_url);
                             }
-                            ui.label(RichText::new("Signatur geprüft. Der Download wird vor dem Einsetzen per SHA-256 kontrolliert.").small().weak());
+                            ui.label(RichText::new(t!("Signatur geprüft. Der Download wird vor dem Einsetzen per SHA-256 kontrolliert.", "Signature verified. The download is checked with SHA-256 before it is installed.")).small().weak());
                             if busy {
-                                ui.label(RichText::new("Während ein Test läuft, wird nicht aktualisiert.").small());
+                                ui.label(RichText::new(t!("Während ein Test läuft, wird nicht aktualisiert.", "No update while a test is running.")).small());
                             }
                             ui.horizontal(|ui| {
-                                if ui.add_enabled(!busy, egui::Button::new("Jetzt aktualisieren")).clicked() {
+                                if ui.add_enabled(!busy, egui::Button::new(t!("Jetzt aktualisieren", "Update now"))).clicked() {
                                     let u = u.clone();
                                     action = Some(Box::new(move |me: &mut Self| {
                                         if !selfreplace::can_self_update() {
-                                            me.fail("Der Ordner der EXE ist schreibgeschützt. Bitte die neue Version manuell von ramforge.org laden.");
+                                            me.fail(t!("Der Ordner der EXE ist schreibgeschützt. Bitte die neue Version manuell von ramforge.org laden.", "The EXE folder is read-only. Please download the new version from ramforge.org manually."));
                                         } else {
                                             me.start_download(u);
                                         }
                                         UiEvent::None
                                     }));
                                 }
-                                if ui.button("Später").clicked() {
+                                if ui.button(t!("Später", "Later")).clicked() {
                                     close = true;
                                 }
-                                if ui.button("Diese Version überspringen").clicked() {
+                                if ui.button(t!("Diese Version überspringen", "Skip this version")).clicked() {
                                     event = UiEvent::Skip(m.version.clone());
                                     close = true;
                                 }
                             });
                         }
                         State::Downloading { done, total } => {
-                            ui.label("Update wird geladen…");
+                            ui.label(t!("Update wird geladen…", "Downloading update…"));
                             let f = if *total > 0 { *done as f32 / *total as f32 } else { 0.0 };
                             ui.add(egui::ProgressBar::new(f).text(format!("{:.1} MB", *done as f64 / 1e6)));
-                            if ui.button("Abbrechen").clicked() {
+                            if ui.button(t!("Abbrechen", "Cancel")).clicked() {
                                 self.cancel.store(true, Ordering::Relaxed);
                             }
                         }
                         State::Ready(u, path) => {
-                            ui.label(format!("{} {} ist geladen und geprüft.", self.product, u.manifest.version));
+                            ui.label(tf!("{} {} ist geladen und geprüft.", "{} {} is downloaded and verified.", self.product, u.manifest.version));
                             ui.horizontal(|ui| {
-                                if ui.add_enabled(!busy, egui::Button::new("Neu starten und installieren")).clicked() {
+                                if ui.add_enabled(!busy, egui::Button::new(t!("Neu starten und installieren", "Restart and install"))).clicked() {
                                     let path = path.clone();
                                     action = Some(Box::new(move |me: &mut Self| match selfreplace::install_and_restart(&path) {
                                         Ok(()) => UiEvent::Restart,
@@ -235,17 +250,17 @@ impl UpdateUi {
                                         }
                                     }));
                                 }
-                                if ui.button("Später").clicked() {
+                                if ui.button(t!("Später", "Later")).clicked() {
                                     close = true;
                                 }
                             });
                         }
                         State::Failed(msg) => {
                             ui.label(RichText::new(msg).color(egui::Color32::from_rgb(0xE5, 0x48, 0x4D)));
-                            if msg.starts_with("Download fehlgeschlagen") {
-                                ui.hyperlink_to("Neue Version manuell von der Website laden", crate::DOWNLOAD_PAGE);
+                            if msg.starts_with("Download fehlgeschlagen") || msg.starts_with("Download failed") {
+                                ui.hyperlink_to(t!("Neue Version manuell von der Website laden", "Download the new version manually from the website"), crate::DOWNLOAD_PAGE);
                             }
-                            if ui.button("Schließen").clicked() {
+                            if ui.button(t!("Schließen", "Close")).clicked() {
                                 close = true;
                             }
                         }

@@ -8,6 +8,8 @@
 //! No hardware data, serial numbers, test results or logs ever leave the PC.
 
 use crate::{agent, fetch_small, key, UpdateError};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 
 pub const NEWS_URL: &str = "https://ramforge.org/api/v1/news";
@@ -150,7 +152,7 @@ fn post_json(url: &str, body: String) -> Result<(), UpdateError> {
 pub fn ping(install_id: &str, version: &str, edition: &str, os: &str) -> Result<(), UpdateError> {
     if !is_uuid_v4(install_id) {
         return Err(UpdateError::BadManifest(
-            "ungültige Installations-ID".into(),
+            t!("ungültige Installations-ID", "invalid installation ID").into(),
         ));
     }
     let body = serde_json::json!({

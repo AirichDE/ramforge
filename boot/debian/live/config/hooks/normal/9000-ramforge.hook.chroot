@@ -3,7 +3,7 @@
 set -e
 sed -i 's/^# *de_DE.UTF-8/de_DE.UTF-8/; s/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 locale-gen
-echo 'LANG=de_DE.UTF-8' > /etc/default/locale
+echo 'LANG=en_US.UTF-8' > /etc/default/locale
 EDITION="$(cat /etc/ramforge-edition 2>/dev/null || echo full)"
 if [ "$EDITION" != "ram" ]; then
     systemctl enable systemd-networkd.service systemd-resolved.service || true
@@ -12,7 +12,7 @@ systemctl enable ramforge.service
 systemctl set-default multi-user.target
 # The live system never needs these.
 systemctl mask apt-daily.timer apt-daily-upgrade.timer man-db.timer 2>/dev/null || true
-chmod 0755 /usr/local/bin/ramforge /usr/local/bin/ramforge-session /usr/local/bin/ramforge-prepare
+chmod 0755 /usr/local/bin/ramforge /usr/local/bin/ramforge-session /usr/local/bin/ramforge-prepare /usr/local/bin/ramforge-x11
 # Unprivileged kiosk user (cage refuses to run as root).
 id ramforge >/dev/null 2>&1 || useradd -m -s /bin/bash ramforge
 for g in video input render i2c; do
@@ -34,5 +34,4 @@ if [ "$EDITION" = "ram" ]; then
         depmod "$(basename "$k")"
     done
     update-initramfs -u -k all
-    rm -rf /usr/share/doc/*/changelog* /usr/share/man /usr/share/info
 fi

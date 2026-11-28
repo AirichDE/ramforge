@@ -8,9 +8,14 @@ use std::sync::atomic::AtomicBool;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("RAMForge-GPU {} (Arbeitslast v{})", env!("CARGO_PKG_VERSION"), ramforge_gpu::WORKLOAD_VERSION);
+        println!(
+            "RAMForge-GPU {} (Arbeitslast v{})",
+            env!("CARGO_PKG_VERSION"),
+            ramforge_gpu::WORKLOAD_VERSION
+        );
         return;
     }
+    ramforge_i18n::init(&std::env::var("RAMFORGE_LANG").unwrap_or_else(|_| "auto".into()));
     let cancel = AtomicBool::new(false);
     let r = ramforge_gpu::run(&cancel, &|f, text| eprintln!("PROGRESS {f:.2} {text}"));
     if args.iter().any(|a| a == "--json") {

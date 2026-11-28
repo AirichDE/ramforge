@@ -1,8 +1,11 @@
 //! Sensor chart for a recorded RAM test or benchmark session.
 
+use crate::app::wide;
 use eframe::egui::{self, Color32, RichText};
 use egui_plot::{Legend, Line, LineStyle, Plot, PlotPoints, VLine};
 use ramforge_hw::sensors::{EventKind, SensorGroup, SensorKind, SessionData, SessionSeries};
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use std::collections::BTreeMap;
 
 pub const ERROR_RED: Color32 = Color32::from_rgb(0xE5, 0x48, 0x4D);
@@ -123,13 +126,13 @@ pub fn default_selection(d: &SessionData) -> Vec<String> {
 
 fn unit_group(u: &str) -> String {
     match u {
-        "°C" => "Temperatur (°C)".into(),
-        "V" => "Spannung (V)".into(),
-        "%" => "Auslastung (%)".into(),
-        "MHz" => "Takt (MHz)".into(),
-        "RPM" => "Lüfter (RPM)".into(),
-        "W" => "Leistung (W)".into(),
-        "" => "ohne Einheit".into(),
+        "°C" => t!("Temperatur (°C)", "Temperature (°C)").into(),
+        "V" => t!("Spannung (V)", "Voltage (V)").into(),
+        "%" => t!("Auslastung (%)", "Load (%)").into(),
+        "MHz" => t!("Takt (MHz)", "Clock (MHz)").into(),
+        "RPM" => t!("Lüfter (RPM)", "Fans (RPM)").into(),
+        "W" => t!("Leistung (W)", "Power (W)").into(),
+        "" => t!("ohne Einheit", "no unit").into(),
         other => other.to_string(),
     }
 }
@@ -192,7 +195,11 @@ pub fn groups<'a>(
             vec![]
         } else {
             vec![(
-                "Normalisiert (0 % = Minimum, 100 % = Maximum je Sensor)".into(),
+                t!(
+                    "Normalisiert (0 % = Minimum, 100 % = Maximum je Sensor)",
+                    "Normalised (0 % = minimum, 100 % = maximum per sensor)"
+                )
+                .into(),
                 sel,
             )]
         };
@@ -235,12 +242,13 @@ pub fn show(ui: &mut egui::Ui, d: &SessionData, st: &mut ChartState, id: &str) {
         .count();
     ui.horizontal_wrapped(|ui| {
         ui.label(
-            RichText::new(format!(
+            RichText::new(tf!(
                 "Sensorverlauf · {} · {} · Beginn {} · {} Sensoren",
+                "Sensor history · {} · {} · start {} · {} sensors",
                 if d.label == "bench" {
                     "Benchmark"
                 } else {
-                    "RAM-Test"
+                    t!("RAM-Test", "RAM test")
                 },
                 fmt_secs(d.duration_secs),
                 d.started.format("%H:%M:%S"),
@@ -249,11 +257,17 @@ pub fn show(ui: &mut egui::Ui, d: &SessionData, st: &mut ChartState, id: &str) {
             .strong(),
         );
         if errors > 0 {
-            ui.label(RichText::new(format!("{errors} Fehler-Markierungen")).color(ERROR_RED));
+            ui.label(
+                RichText::new(tf!(
+                    "{errors} Fehler-Markierungen",
+                    "{errors} error markers"
+                ))
+                .color(ERROR_RED),
+            );
         }
         if let Some(csv) = &d.csv {
             if ui
-                .small_button("CSV öffnen")
+                .small_button(t!("CSV öffnen", "Open CSV"))
                 .on_hover_text(csv.display().to_string())
                 .clicked()
             {
@@ -262,16 +276,26 @@ pub fn show(ui: &mut egui::Ui, d: &SessionData, st: &mut ChartState, id: &str) {
         }
     });
     if d.series.is_empty() {
-        ui.label(RichText::new("Keine Sensorwerte aufgezeichnet.").weak());
+        ui.label(
+            RichText::new(t!(
+                "Keine Sensorwerte aufgezeichnet.",
+                "No sensor values recorded."
+            ))
+            .weak(),
+        );
         return;
     }
     ui.horizontal(|ui| {
         ui.checkbox(
             &mut st.normalized,
-            "Normalisiert (alle Sensoren in einem Diagramm)",
+            t!(
+                "Normalisiert (alle Sensoren in einem Diagramm)",
+                "Normalised (all sensors in one chart)"
+            ),
         );
-        egui::CollapsingHeader::new(format!(
+        egui::CollapsingHeader::new(tf!(
             "Sensoren auswählen ({} von {})",
+            "Select sensors ({} of {})",
             st.selected.len(),
             d.series.len()
         ))
@@ -281,7 +305,7 @@ pub fn show(ui: &mut egui::Ui, d: &SessionData, st: &mut ChartState, id: &str) {
                 if ui.small_button("Standard").clicked() {
                     st.selected = default_selection(d);
                 }
-                if ui.small_button("Keine").clicked() {
+                if ui.small_button(t!("Keine", "None")).clicked() {
                     st.selected.clear();
                 }
             });
@@ -320,7 +344,7 @@ pub fn show(ui: &mut egui::Ui, d: &SessionData, st: &mut ChartState, id: &str) {
     let link = egui::Id::unique((id, "link"));
     let groups = groups(d, &st.selected, st.normalized);
     if groups.is_empty() {
-        ui.label(RichText::new("Keine Sensoren ausgewählt.").weak());
+        ui.label(RichText::new(t!("Keine Sensoren ausgewählt.", "No sensors selected.")).weak());
     }
     for (title, items) in &groups {
         ui.label(RichText::new(title).small().strong());
@@ -381,8 +405,9 @@ pub fn show(ui: &mut egui::Ui, d: &SessionData, st: &mut ChartState, id: &str) {
                 };
                 ui.label(RichText::new(&e.text).strong().color(c));
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(tf!(
                         "bei {} ({})",
+                        "at {} ({})",
                         fmt_secs(e.t),
                         e.time.format("%H:%M:%S")
                     ))
@@ -407,38 +432,50 @@ pub fn show(ui: &mut egui::Ui, d: &SessionData, st: &mut ChartState, id: &str) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new("Min / Max / Ø im Testzeitraum")
-                .small()
-                .strong(),
+            RichText::new(t!(
+                "Min / Max / Ø im Testzeitraum",
+                "Min / max / avg during the test"
+            ))
+            .small()
+            .strong(),
         );
-        ui.checkbox(&mut st.table_all, "alle Sensoren");
+        ui.checkbox(&mut st.table_all, t!("alle Sensoren", "all sensors"));
     });
-    egui::Grid::new((id, "stats"))
-        .num_columns(6)
-        .striped(true)
-        .show(ui, |ui| {
-            for h in ["Gerät", "Sensor", "Min", "Max", "Ø", "Werte"] {
-                ui.label(RichText::new(h).small().weak());
-            }
-            ui.end_row();
-            for s in d.series.iter().filter(|s| {
-                if st.table_all {
-                    !s.label.starts_with("Thread ")
-                } else {
-                    st.selected.contains(&s.id)
+    wide(ui, |ui| {
+        egui::Grid::new((id, "stats"))
+            .num_columns(6)
+            .striped(true)
+            .show(ui, |ui| {
+                for h in [
+                    t!("Gerät", "Device"),
+                    "Sensor",
+                    "Min",
+                    "Max",
+                    "Ø",
+                    t!("Werte", "Values"),
+                ] {
+                    ui.label(RichText::new(h).small().weak());
                 }
-            }) {
-                ui.label(RichText::new(&s.device).small());
-                ui.label(&s.label);
-                ui.monospace(crate::app::fmt_val(s.min, &s.unit));
-                ui.monospace(crate::app::fmt_val(s.max, &s.unit));
-                ui.monospace(crate::app::fmt_val(s.avg, &s.unit));
-                ui.label(RichText::new(s.samples.to_string()).small().weak());
                 ui.end_row();
-            }
-        });
+                for s in d.series.iter().filter(|s| {
+                    if st.table_all {
+                        !s.label.starts_with("Thread ")
+                    } else {
+                        st.selected.contains(&s.id)
+                    }
+                }) {
+                    ui.label(RichText::new(&s.device).small());
+                    ui.label(&s.label);
+                    ui.monospace(crate::app::fmt_val(s.min, &s.unit));
+                    ui.monospace(crate::app::fmt_val(s.max, &s.unit));
+                    ui.monospace(crate::app::fmt_val(s.avg, &s.unit));
+                    ui.label(RichText::new(s.samples.to_string()).small().weak());
+                    ui.end_row();
+                }
+            })
+    });
     if !d.events.is_empty() {
-        egui::CollapsingHeader::new(format!("Ereignisse ({})", d.events.len()))
+        egui::CollapsingHeader::new(tf!("Ereignisse ({})", "Events ({})", d.events.len()))
             .id_salt((id, "events"))
             .show(ui, |ui| {
                 for e in &d.events {

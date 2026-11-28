@@ -1,6 +1,8 @@
 //! Memory bandwidth and latency benchmark.
 
 use crate::rng::Rng;
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,23 +55,34 @@ pub fn run(
         buffer_bytes: (words * 8 * threads) as u64,
         ..Default::default()
     };
-    progress(0.0, "Lesen");
+    progress(0.0, t!("Lesen", "Read"));
     res.read_gbs = bandwidth(threads, words, Op::Read, cancel)?;
-    progress(0.2, "Schreiben");
+    progress(0.2, t!("Schreiben", "Write"));
     res.write_gbs = bandwidth(threads, words, Op::Write, cancel)?;
-    progress(0.4, "Kopieren");
+    progress(0.4, t!("Kopieren", "Copy"));
     res.copy_gbs = bandwidth(threads, words, Op::Copy, cancel)?;
     let sizes: [u64; 9] = [
-        16 << 10, 64 << 10, 256 << 10, 1 << 20, 4 << 20, 16 << 20, 64 << 20, 256 << 20, 512 << 20,
+        16 << 10,
+        64 << 10,
+        256 << 10,
+        1 << 20,
+        4 << 20,
+        16 << 20,
+        64 << 20,
+        256 << 20,
+        512 << 20,
     ];
     for (i, &size) in sizes.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
-        progress(0.6 + 0.4 * i as f32 / sizes.len() as f32, "Latenz");
+        progress(
+            0.6 + 0.4 * i as f32 / sizes.len() as f32,
+            t!("Latenz", "Latency"),
+        );
         res.latency.push((size, latency_ns(size as usize)));
     }
-    progress(1.0, "Fertig");
+    progress(1.0, t!("Fertig", "Done"));
     Some(res)
 }
 
@@ -79,7 +92,8 @@ fn bandwidth(threads: usize, words: usize, op: Op, cancel: &AtomicBool) -> Optio
     // Each worker records its own start and end. The coordinating thread may
     // be scheduled late after a barrier, so its clock would cut the interval
     // short and report impossible bandwidth.
-    let spans: std::sync::Mutex<Vec<(Instant, Instant)>> = std::sync::Mutex::new(Vec::with_capacity(threads));
+    let spans: std::sync::Mutex<Vec<(Instant, Instant)>> =
+        std::sync::Mutex::new(Vec::with_capacity(threads));
     let mut best = 0.0f64;
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads)

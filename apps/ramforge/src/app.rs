@@ -12,6 +12,8 @@ use ramforge_hw::sensors::{
 };
 use ramforge_hw::spd::{self, SpdInfo};
 use ramforge_hw::SystemInfo;
+#[allow(unused_imports)]
+use ramforge_i18n::{t, tf};
 use ramforge_update::online::{self, NewsItem};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,7 +25,9 @@ pub const URL_SITE: &str = "https://ramforge.org";
 pub const URL_DISCLAIMER: &str = "https://ramforge.org/disclaimer";
 pub const URL_PRIVACY: &str = "https://ramforge.org/privacy";
 pub const URL_SOURCE: &str = "https://github.com/airichde/ramforge";
-const SPONSOR_NOTE: &str = "Hosting freundlicherweise bereitgestellt von Nerdscave Consulting, nicht am Projekt beteiligt.";
+fn sponsor_note() -> &'static str {
+    t!("Hosting freundlicherweise bereitgestellt von Nerdscave Consulting, nicht am Projekt beteiligt.", "Hosting kindly provided by Nerdscave Consulting, not involved in the project.")
+}
 const URL_SPONSOR: &str = "https://nerdscave-consulting.com/";
 
 pub fn icon_rgba() -> Option<(Vec<u8>, u32, u32)> {
@@ -75,12 +79,12 @@ impl Tab {
     fn title(self) -> &'static str {
         match self {
             Tab::System => "System",
-            Tab::Test => "RAM-Test",
+            Tab::Test => t!("RAM-Test", "RAM test"),
             Tab::Bench => "Benchmark",
-            Tab::Sensors => "Sensoren",
+            Tab::Sensors => t!("Sensoren", "Sensors"),
             Tab::Spd => "SPD",
-            Tab::Log => "Protokoll",
-            Tab::About => "Über",
+            Tab::Log => t!("Protokoll", "Log"),
+            Tab::About => t!("Über", "About"),
         }
     }
 }
@@ -161,6 +165,8 @@ pub struct RamForgeApp {
     chart_bench: crate::chart::ChartState,
     chart_log: crate::chart::ChartState,
     log_session: usize,
+    /// Zoom applied last frame; None until the first frame set it up.
+    zoom_seen: Option<f32>,
     /// Last (pass, test index) marked as phase, last benchmark step marked.
     /// How many entries of the runner's phase log were marked already.
     phases_seen: usize,
@@ -171,20 +177,31 @@ impl RamForgeApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let paths = Paths::resolve();
         let settings = Settings::load(&paths.settings_file());
+        // --lang de|en overrides the saved choice (screenshots, support).
+        ramforge_i18n::init(&arg_value("--lang").unwrap_or_else(|| settings.language.clone()));
         let mut log = AppLog::new(&paths.logs);
-        log.info(format!("RAMForge {} gestartet", env!("CARGO_PKG_VERSION")));
-        log.info(format!(
+        log.info(tf!(
+            "RAMForge {} gestartet",
+            "RAMForge {} started",
+            env!("CARGO_PKG_VERSION")
+        ));
+        log.info(tf!(
             "Datenordner: {}{}",
+            "Data folder: {}{}",
             paths.root.display(),
             if paths.portable {
-                " (portabel)"
+                t!(" (portabel)", " (portable)")
             } else {
-                " (Benutzerprofil, EXE-Ordner nicht beschreibbar)"
+                t!(
+                    " (Benutzerprofil, EXE-Ordner nicht beschreibbar)",
+                    " (user profile, EXE folder not writable)"
+                )
             }
         ));
         if std::env::args().any(|a| a == "--updated") {
-            log.info(format!(
+            log.info(tf!(
                 "Update auf Version {} installiert",
+                "Update to version {} installed",
                 env!("CARGO_PKG_VERSION")
             ));
         }
@@ -259,6 +276,7 @@ impl RamForgeApp {
             chart_bench: Default::default(),
             chart_log: Default::default(),
             log_session: 0,
+            zoom_seen: None,
             phases_seen: 0,
             bench_phase: String::new(),
             auto_test: if std::env::args().any(|a| a == "--start-bench") && !ram_only() {
@@ -330,7 +348,8 @@ impl RamForgeApp {
                 .collect(),
         };
         if tests.is_empty() {
-            self.log.warn("Kein Test ausgewählt");
+            self.log
+                .warn(t!("Kein Test ausgewählt", "No test selected"));
             return;
         }
         let avail = ramforge_core::mem::mem_status().available_bytes;
@@ -346,9 +365,13 @@ impl RamForgeApp {
             stop_on_error: self.stop_on_error,
             inject_fault: self.inject_fault,
         };
-        let name = self.preset.map(|p| p.name()).unwrap_or("Eigene Auswahl");
-        self.log.info(format!(
+        let name = self
+            .preset
+            .map(|p| p.name())
+            .unwrap_or(t!("Eigene Auswahl", "Custom selection"));
+        self.log.info(tf!(
             "RAM-Test gestartet: {name}, {} mit {} Threads, {} Durchläufe{}",
+            "RAM test started: {name}, {} with {} threads, {} passes{}",
             report::gib(total),
             cfg.threads,
             if cfg.passes == 0 {
@@ -357,12 +380,15 @@ impl RamForgeApp {
                 cfg.passes.to_string()
             },
             if cfg.inject_fault {
-                ", Selbsttest aktiv"
+                t!(", Selbsttest aktiv", ", self-test active")
             } else {
                 ""
             }
         ));
-        self.begin_session("test", &format!("RAM-Test gestartet: {name}"));
+        self.begin_session(
+            "test",
+            &tf!("RAM-Test gestartet: {name}", "RAM test started: {name}"),
+        );
         self.errors.clear();
         self.bits = [0; 64];
         self.finalized = false;
@@ -383,8 +409,8 @@ impl RamForgeApp {
             .logs
             .join(format!("sensors-{}-{kind}.csv", paths::stamp()));
         match self.hub.start_session(kind, Some(&csv)) {
-            Ok(()) => self.log.info(format!("Sensor-Aufzeichnung: {}", csv.display())),
-            Err(e) => self.log.warn(format!("Sensor-CSV nicht möglich ({e}); der Verlauf wird trotzdem im Programm aufgezeichnet")),
+            Ok(()) => self.log.info(tf!("Sensor-Aufzeichnung: {}", "Sensor recording: {}", csv.display())),
+            Err(e) => self.log.warn(tf!("Sensor-CSV nicht möglich ({e}); der Verlauf wird trotzdem im Programm aufgezeichnet", "Sensor CSV not possible ({e}); the history is still recorded in the program")),
         }
         self.hub.mark_kind(EventKind::Info, start_text);
     }
@@ -396,8 +422,9 @@ impl RamForgeApp {
         }
         self.hub.mark_kind(EventKind::Info, result_text);
         if let Some(d) = self.hub.stop_session() {
-            self.log.info(format!(
+            self.log.info(tf!(
                 "Sensor-Aufzeichnung beendet: {} Sensoren, {} Ereignisse{}",
+                "Sensor recording finished: {} sensors, {} events{}",
                 d.series.len(),
                 d.events.len(),
                 d.csv
@@ -425,14 +452,17 @@ impl RamForgeApp {
             if ui
                 .checkbox(
                     &mut self.settings.record_sensors,
-                    "Sensoren während des Tests aufzeichnen",
+                    t!(
+                        "Sensoren während des Tests aufzeichnen",
+                        "Record sensors during the test"
+                    ),
                 )
                 .changed()
             {
                 self.save_settings();
             }
             ui.add_enabled_ui(self.settings.record_sensors, |ui| {
-                ui.label("Intervall");
+                ui.label(t!("Intervall", "Interval"));
                 for (ms, label) in [
                     (500u64, "0,5 s"),
                     (1000, "1 s"),
@@ -456,10 +486,12 @@ impl RamForgeApp {
         let volts = snap.iter().any(|s| s.reading.kind == SensorKind::Voltage);
         if self.settings.record_sensors && !(temps && volts) {
             ui.label(
-                RichText::new(
+                RichText::new(t!(
                     "Für Temperaturen und Spannungen HWiNFO mit 'Shared Memory Support' starten. \
                      Auslastung, Takt und RAM-Belegung werden auch ohne HWiNFO aufgezeichnet.",
-                )
+                    "For temperatures and voltages, start HWiNFO with 'Shared Memory Support'. \
+                     Load, clock and RAM usage are recorded without HWiNFO too."
+                ))
                 .small()
                 .color(WARN),
             );
@@ -470,7 +502,8 @@ impl RamForgeApp {
         if let Some(r) = &self.run {
             if r.running.load(Ordering::Acquire) {
                 r.stop();
-                self.log.info("Test wird abgebrochen…");
+                self.log
+                    .info(t!("Test wird abgebrochen…", "Stopping test…"));
             }
         }
         if let Some(b) = &self.bench {
@@ -484,7 +517,8 @@ impl RamForgeApp {
         }
         let sel = self.bench_sel.clone();
         if !(sel.cpu || sel.ram || sel.stress || sel.gpu) {
-            self.log.warn("Kein Benchmark ausgewählt");
+            self.log
+                .warn(t!("Kein Benchmark ausgewählt", "No benchmark selected"));
             return;
         }
         let threads = self.bench_threads.max(1);
@@ -500,15 +534,16 @@ impl RamForgeApp {
         let parts: Vec<&str> = [
             (sel.cpu, "CPU"),
             (sel.ram, "RAM"),
-            (sel.stress, "CPU+RAM-Last"),
+            (sel.stress, t!("CPU+RAM-Last", "CPU+RAM load")),
             (sel.gpu, "GPU"),
         ]
         .iter()
         .filter(|p| p.0)
         .map(|p| p.1)
         .collect();
-        let text = format!(
+        let text = tf!(
             "Benchmark gestartet: {} · {threads} Threads × {per_thread_mib} MiB",
+            "Benchmark started: {} · {threads} threads × {per_thread_mib} MiB",
             parts.join(", ")
         );
         self.log.info(text.clone());
@@ -542,14 +577,21 @@ impl RamForgeApp {
                 .flat_map(|c| c.to_srgba_unmultiplied())
                 .collect();
             let res = image::RgbaImage::from_raw(img.size[0] as u32, img.size[1] as u32, bytes)
-                .ok_or_else(|| "ungültige Bildgröße".to_string())
+                .ok_or_else(|| t!("ungültige Bildgröße", "invalid image size").to_string())
                 .and_then(|i| i.save(&path).map_err(|e| e.to_string()));
             msgs.lock().unwrap().push(match res {
                 Ok(()) => (
                     Level::Info,
-                    format!("Screenshot gespeichert: {}", path.display()),
+                    tf!(
+                        "Screenshot gespeichert: {}",
+                        "Screenshot saved: {}",
+                        path.display()
+                    ),
                 ),
-                Err(e) => (Level::Error, format!("Screenshot fehlgeschlagen: {e}")),
+                Err(e) => (
+                    Level::Error,
+                    tf!("Screenshot fehlgeschlagen: {e}", "Screenshot failed: {e}"),
+                ),
             });
         });
         ctx.request_repaint();
@@ -575,15 +617,17 @@ impl RamForgeApp {
         });
         match report::save_all(&r, &self.paths.reports) {
             Ok(p) => {
-                self.log.info(format!(
+                self.log.info(tf!(
                     "Bericht gespeichert: {} (+ .json, .txt)",
+                    "Report saved: {} (+ .json, .txt)",
                     p.display()
                 ));
                 self.last_report = Some(p);
             }
-            Err(e) => self
-                .log
-                .error(format!("Bericht konnte nicht gespeichert werden: {e}")),
+            Err(e) => self.log.error(tf!(
+                "Bericht konnte nicht gespeichert werden: {e}",
+                "Report could not be saved: {e}"
+            )),
         }
     }
 
@@ -606,7 +650,7 @@ impl RamForgeApp {
                 if let Some(t) = run.config.tests.get(ti) {
                     self.hub.mark_kind(
                         EventKind::Phase,
-                        format!("Durchlauf {} · {}", pass + 1, t.name()),
+                        tf!("Durchlauf {} · {}", "Pass {} · {}", pass + 1, t.name()),
                     );
                 }
             }
@@ -616,10 +660,9 @@ impl RamForgeApp {
                     .filter(|b| e.xor() & (1u64 << b) != 0)
                     .map(|b| b.to_string())
                     .collect();
-                let text = format!(
-                    "RAM-Fehler #{n}: {} Durchlauf {} Thread {} Adresse 0x{:X} soll {:016X} ist {:016X} Bit {}{}",
+                let text = tf!("RAM-Fehler #{n}: {} Durchlauf {} Thread {} Adresse 0x{:X} soll {:016X} ist {:016X} Bit {}{}", "RAM error #{n}: {} pass {} thread {} address 0x{:X} expected {:016X} got {:016X} bits {}{}",
                     e.test, e.pass + 1, e.thread, e.address, e.expected, e.actual, bits.join(","),
-                    if e.simulated { " (Selbsttest, simuliert)" } else { "" }
+                    if e.simulated { t!(" (Selbsttest, simuliert)", " (self-test, simulated)") } else { "" }
                 );
                 // Chart/CSV markers for the first 1000 errors; beyond that a
                 // defective module would flood the CSV, the table keeps all.
@@ -628,14 +671,16 @@ impl RamForgeApp {
                 } else if n == 1001 {
                     self.hub.mark_kind(
                         EventKind::Info,
-                        "Mehr als 1000 Fehler: weitere nur in Fehlertabelle und Bericht",
+                        t!("Mehr als 1000 Fehler: weitere nur in Fehlertabelle und Bericht", "More than 1000 errors: further ones only in the error table and report"),
                     );
                 }
                 if n <= 100 {
                     self.log.error(text);
                 } else if n == 101 {
-                    self.log
-                        .warn("Weitere Fehler stehen nur noch in der Fehlertabelle und im Bericht");
+                    self.log.warn(t!(
+                        "Weitere Fehler stehen nur noch in der Fehlertabelle und im Bericht",
+                        "Further errors are only listed in the error table and the report"
+                    ));
                 }
                 self.errors.push(e);
             }
@@ -643,8 +688,9 @@ impl RamForgeApp {
             if !run.running.load(Ordering::Acquire) && !self.finalized {
                 self.finalized = true;
                 if let Some(s) = run.summary.lock().unwrap().clone() {
-                    let text = format!(
+                    let text = tf!(
                         "RAM-Test beendet: {} – {} (Dauer {}, {} Durchläufe, {} Fehler)",
+                        "RAM test finished: {} – {} (duration {}, {} passes, {} errors)",
                         report::outcome_text(s.outcome),
                         s.message,
                         report::duration(s.duration_secs),
@@ -660,12 +706,12 @@ impl RamForgeApp {
                         text.clone(),
                     );
                     if !s.memory_locked && s.outcome != Outcome::Aborted {
-                        self.log.warn("Nicht der gesamte Testspeicher konnte gesperrt werden; Windows konnte Teile auslagern.");
+                        self.log.warn(t!("Nicht der gesamte Testspeicher konnte gesperrt werden; Windows konnte Teile auslagern.", "Not all of the test memory could be locked; Windows may have paged parts of it out."));
                     }
                     self.last_summary = Some(s);
                     self.end_session(&text);
                 } else {
-                    self.end_session("RAM-Test beendet");
+                    self.end_session(t!("RAM-Test beendet", "RAM test finished"));
                 }
                 self.save_report();
             }
@@ -676,7 +722,7 @@ impl RamForgeApp {
             .map(|b| b.progress.lock().unwrap().1.clone());
         // (progress.2 is detail text such as the current GB/s and is not a phase.)
         if let Some(step) = step {
-            if step != self.bench_phase && step != "Start" && step != "Fertig" {
+            if step != self.bench_phase && step != "Start" && step != t!("Fertig", "Done") {
                 self.hub
                     .mark_kind(EventKind::Phase, format!("Benchmark · {step}"));
                 self.bench_phase = step;
@@ -692,30 +738,26 @@ impl RamForgeApp {
             for c in &run.cpu {
                 match &c.skipped {
                     Some(why) => parts.push(format!("{}: {why}", c.kind.name())),
-                    None => parts.push(format!(
-                        "{} [{}]: 1T {} Pkt ({:.1} {u}), {}T {} Pkt ({:.1} {u}), Skalierung {:.1}×{}",
+                    None => parts.push(tf!("{} [{}]: 1T {} Pkt ({:.1} {u}), {}T {} Pkt ({:.1} {u}), Skalierung {:.1}×{}", "{} [{}]: 1T {} pts ({:.1} {u}), {}T {} pts ({:.1} {u}), scaling {:.1}×{}",
                         c.kind.name(), c.variant, c.single_points, c.single_raw, c.threads, c.multi_points, c.multi_raw, c.scaling,
-                        if c.errors > 0 { format!(", {} RECHENFEHLER", c.errors) } else { String::new() },
+                        if c.errors > 0 { tf!(", {} RECHENFEHLER", ", {} CALCULATION ERRORS", c.errors) } else { String::new() },
                         u = c.kind.unit()
                     )),
                 }
             }
             if let Some(r) = &run.ram {
-                parts.push(format!(
-                    "RAM: Lesen {:.2} GB/s, Schreiben {:.2} GB/s, Kopieren {:.2} GB/s, Latenz {:.1} ns",
+                parts.push(tf!("RAM: Lesen {:.2} GB/s, Schreiben {:.2} GB/s, Kopieren {:.2} GB/s, Latenz {:.1} ns", "RAM: read {:.2} GB/s, write {:.2} GB/s, copy {:.2} GB/s, latency {:.1} ns",
                     r.read_gbs, r.write_gbs, r.copy_gbs, r.dram_latency_ns().unwrap_or(0.0)
                 ));
             }
             if let Some(s) = &run.stress {
-                parts.push(format!(
-                    "CPU+RAM-Last: Ø {:.1} GB/s (min {:.1}, max {:.1}, Stabilität {:.0} %), {} Fehler",
+                parts.push(tf!("CPU+RAM-Last: Ø {:.1} GB/s (min {:.1}, max {:.1}, Stabilität {:.0} %), {} Fehler", "CPU+RAM load: avg {:.1} GB/s (min {:.1}, max {:.1}, stability {:.0} %), {} errors",
                     s.avg_gbs, s.min_gbs, s.max_gbs, s.stability() * 100.0, s.errors
                 ));
                 for e in s.first_errors.iter().take(20) {
                     self.hub.mark_kind(
                         EventKind::Error,
-                        format!(
-                            "Fehler unter Last: Thread {} Adresse 0x{:X} soll {:016X} ist {:016X}",
+                        tf!("Fehler unter Last: Thread {} Adresse 0x{:X} soll {:016X} ist {:016X}", "Error under load: thread {} address 0x{:X} expected {:016X} got {:016X}",
                             e.thread, e.address, e.expected, e.actual
                         ),
                     );
@@ -724,14 +766,17 @@ impl RamForgeApp {
             if let Some(g) = &run.gpu {
                 parts.push(match &g.skipped {
                     Some(why) => format!("GPU: {why}"),
-                    None => format!(
-                        "GPU {} ({}): VRAM {:.0} GB/s, FP32 {:.2} TFLOPS, zur GPU {:.1} GB/s, zum PC {:.1} GB/s, {} Fehler",
+                    None => tf!("GPU {} ({}): VRAM {:.0} GB/s, FP32 {:.2} TFLOPS, zur GPU {:.1} GB/s, zum PC {:.1} GB/s, {} Fehler", "GPU {} ({}): VRAM {:.0} GB/s, FP32 {:.2} TFLOPS, to GPU {:.1} GB/s, to PC {:.1} GB/s, {} errors",
                         g.adapter, g.backend, g.vram_gbs, g.fp32_tflops, g.upload_gbs, g.download_gbs, g.errors
                     ),
                 });
             }
             for p in &parts {
-                if p.contains("RECHENFEHLER") || p.contains("Fehler") && !p.contains(" 0 Fehler") {
+                let bad = p.contains("RECHENFEHLER")
+                    || p.contains("CALCULATION ERRORS")
+                    || (p.contains("Fehler") && !p.contains(" 0 Fehler"))
+                    || (p.contains("errors") && !p.contains(" 0 errors"));
+                if bad {
                     self.log.error(p.clone());
                 } else {
                     self.log.info(p.clone());
@@ -745,7 +790,7 @@ impl RamForgeApp {
             self.end_session(&format!(
                 "Benchmark {state}{}",
                 if run.errors() > 0 {
-                    format!(" – {} Fehler", run.errors())
+                    tf!(" – {} Fehler", " – {} errors", run.errors())
                 } else {
                     String::new()
                 }
@@ -879,19 +924,25 @@ impl RamForgeApp {
         if self.settings.check_updates && self.news.lock().unwrap().is_none() {
             self.news_seen_before = self.settings.last_news_id;
             let (news, msgs) = (self.news.clone(), self.async_msgs.clone());
-            std::thread::spawn(move || match online::fetch_news("de", ver) {
-                Ok(items) => {
-                    msgs.lock().unwrap().push((
+            std::thread::spawn(
+                move || match online::fetch_news(ramforge_i18n::code(), ver) {
+                    Ok(items) => {
+                        msgs.lock().unwrap().push((
+                            Level::Info,
+                            tf!(
+                                "Neuigkeiten geladen: {} Einträge",
+                                "News loaded: {} entries",
+                                items.len()
+                            ),
+                        ));
+                        *news.lock().unwrap() = Some(items);
+                    }
+                    Err(e) => msgs.lock().unwrap().push((
                         Level::Info,
-                        format!("Neuigkeiten geladen: {} Einträge", items.len()),
-                    ));
-                    *news.lock().unwrap() = Some(items);
-                }
-                Err(e) => msgs
-                    .lock()
-                    .unwrap()
-                    .push((Level::Info, format!("Neuigkeiten nicht abrufbar: {e}"))),
-            });
+                        tf!("Neuigkeiten nicht abrufbar: {e}", "News not available: {e}"),
+                    )),
+                },
+            );
         }
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         // Automated runs (--screenshot, --start-test, --start-bench) never send statistics.
@@ -909,8 +960,13 @@ impl RamForgeApp {
             );
             std::thread::spawn(move || {
                 let m = match online::ping(&id, ver, "windows", &os) {
-                    Ok(()) => "Anonyme Statistik gesendet".to_string(),
-                    Err(e) => format!("Anonyme Statistik nicht gesendet: {e}"),
+                    Ok(()) => {
+                        t!("Anonyme Statistik gesendet", "Anonymous statistics sent").to_string()
+                    }
+                    Err(e) => tf!(
+                        "Anonyme Statistik nicht gesendet: {e}",
+                        "Anonymous statistics not sent: {e}"
+                    ),
                 };
                 msgs.lock().unwrap().push((Level::Info, m));
             });
@@ -922,21 +978,26 @@ impl RamForgeApp {
             self.settings.stats_consent = true;
             self.settings.install_id = online::new_install_id();
             self.settings.last_ping.clear();
-            self.log.info("Anonyme Statistik eingeschaltet");
+            self.log.info(t!(
+                "Anonyme Statistik eingeschaltet",
+                "Anonymous statistics switched on"
+            ));
             self.online_started = false; // sends the first ping on the next frame
         } else {
             let id = std::mem::take(&mut self.settings.install_id);
             self.settings.stats_consent = false;
             self.settings.last_ping.clear();
-            self.log
-                .info("Anonyme Statistik ausgeschaltet, Löschanfrage wird gesendet");
+            self.log.info(t!(
+                "Anonyme Statistik ausgeschaltet, Löschanfrage wird gesendet",
+                "Anonymous statistics switched off, sending deletion request"
+            ));
             let msgs = self.async_msgs.clone();
             std::thread::spawn(move || {
                 let m = match online::forget(&id) {
-                    Ok(()) => (Level::Info, "Server hat die Statistikdaten dieser Installation gelöscht".to_string()),
+                    Ok(()) => (Level::Info, t!("Server hat die Statistikdaten dieser Installation gelöscht", "The server deleted the statistics data of this installation").to_string()),
                     Err(e) => (
                         Level::Warn,
-                        format!("Löschanfrage fehlgeschlagen ({e}). Die lokale ID ist gelöscht; ohne Widerruf löscht der Server nach 13 Monaten."),
+                        tf!("Löschanfrage fehlgeschlagen ({e}). Die lokale ID ist gelöscht; ohne Widerruf löscht der Server nach 13 Monaten.", "Deletion request failed ({e}). The local ID is deleted; without a revocation the server deletes the data after 13 months."),
                     ),
                 };
                 msgs.lock().unwrap().push(m);
@@ -990,13 +1051,16 @@ impl RamForgeApp {
         }
         match self.updater.show(ctx, self.busy()) {
             ramforge_update::ui::UiEvent::Skip(v) => {
-                self.log.info(format!("Update {v} wird übersprungen"));
+                self.log
+                    .info(tf!("Update {v} wird übersprungen", "Skipping update {v}"));
                 self.settings.skipped_update = v;
                 self.save_settings();
             }
             ramforge_update::ui::UiEvent::Restart => {
-                self.log
-                    .info("Neue Version gestartet, RAMForge wird beendet");
+                self.log.info(t!(
+                    "Neue Version gestartet, RAMForge wird beendet",
+                    "New version started, RAMForge is closing"
+                ));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             ramforge_update::ui::UiEvent::None => {}
@@ -1057,6 +1121,7 @@ impl eframe::App for RamForgeApp {
         }
         self.poll();
         self.shortcuts(&ctx);
+        self.zoom(&ctx);
         egui::Panel::top("top").show(ui, |ui| self.top_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::right("sidebar")
@@ -1246,71 +1311,155 @@ fn md_view(ui: &mut egui::Ui, md: &str) {
 // -------------------------------------------------------------------- panels
 
 impl RamForgeApp {
-    fn top_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            if let Some(t) = &self.logo {
-                ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(26.0, 26.0)));
-            }
-            ui.label(RichText::new("RAM").size(22.0).strong().color(ACCENT));
-            ui.add_space(-8.0);
-            ui.label(RichText::new("Forge").size(22.0).strong());
-            ui.add_space(12.0);
-            for (i, t) in Tab::visible().iter().enumerate() {
-                let r = ui.selectable_label(self.tab == *t, RichText::new(t.title()).size(15.0));
-                if r.on_hover_text(format!("Strg+{}", i + 1)).clicked() {
-                    self.tab = *t;
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Boot edition: there is no desktop, so power off / reboot live here.
-                if boot_edition() {
-                    if ui
-                        .add_enabled(!self.busy(), egui::Button::new("⏻ Aus"))
-                        .on_hover_text("Rechner ausschalten")
-                        .clicked()
-                    {
-                        power("poweroff");
-                    }
-                    if ui
-                        .add_enabled(!self.busy(), egui::Button::new("⟳ Neustart"))
-                        .on_hover_text("Rechner neu starten")
-                        .clicked()
-                    {
-                        power("reboot");
-                    }
-                    ui.separator();
-                }
-                let (icon, next, tip) = match self.settings.theme.as_str() {
-                    "light" => ("🌙", "dark", "Dunkles Design"),
-                    _ => ("☀", "light", "Helles Design"),
+    /// Zoom: saved choice, or automatic (fits the layout on small screens,
+    /// e.g. the boot system on a 1080p monitor with a large scale factor).
+    /// Ctrl +/-/0 change it (egui built-in); a change is saved.
+    fn zoom(&mut self, ctx: &egui::Context) {
+        match self.zoom_seen {
+            None => {
+                let z = if self.settings.zoom > 0.0 {
+                    self.settings.zoom
+                } else {
+                    auto_zoom(ctx)
                 };
-                if ui.button(icon).on_hover_text(tip).clicked() {
-                    self.settings.theme = next.into();
-                    apply_theme(ui.ctx(), next);
+                ctx.set_zoom_factor(z);
+                self.zoom_seen = Some(z);
+            }
+            Some(seen) => {
+                let z = ctx.zoom_factor();
+                if (z - seen).abs() > 0.001 {
+                    self.settings.zoom = z;
+                    self.zoom_seen = Some(z);
                     self.save_settings();
                 }
-                let unread = self.unread_news();
-                if unread > 0
-                    && ui
-                        .button(RichText::new(format!("📰 {unread} neu")).color(ACCENT))
-                        .on_hover_text("Neuigkeiten anzeigen")
-                        .clicked()
-                {
-                    self.tab = Tab::About;
-                }
-                if ui.button("📷").on_hover_text("Screenshot (F12)").clicked() {
-                    let ctx = ui.ctx().clone();
-                    self.screenshot(&ctx);
-                }
-                if ui
-                    .button("💾 Bericht")
-                    .on_hover_text("Bericht als HTML, JSON und TXT speichern (Strg+S)")
-                    .clicked()
-                {
-                    self.save_report();
-                }
+            }
+        }
+    }
+
+    fn set_zoom(&mut self, ctx: &egui::Context, z: f32) {
+        // z <= 0: back to automatic (saved as 0).
+        let auto = z <= 0.0;
+        let z = if auto {
+            auto_zoom(ctx)
+        } else {
+            z.clamp(0.5, 2.0)
+        };
+        ctx.set_zoom_factor(z);
+        self.zoom_seen = Some(z);
+        self.settings.zoom = if auto { 0.0 } else { z };
+        self.save_settings();
+    }
+
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        // Tabs must never be covered by the buttons on the right: if the
+        // window is too narrow for one row (big UI scale, 1024 px screens),
+        // the buttons get a row of their own.
+        let mut needed = 1260.0;
+        if boot_edition() {
+            needed += 190.0;
+        }
+        if self.unread_news() > 0 {
+            needed += 80.0;
+        }
+        if ui.available_width() >= needed {
+            ui.horizontal(|ui| {
+                self.brand_and_tabs(ui);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.top_actions(ui)
+                });
             });
-        });
+        } else {
+            ui.horizontal_wrapped(|ui| self.brand_and_tabs(ui));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.top_actions(ui)
+            });
+        }
+    }
+
+    fn brand_and_tabs(&mut self, ui: &mut egui::Ui) {
+        if let Some(t) = &self.logo {
+            ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(26.0, 26.0)));
+        }
+        ui.label(RichText::new("RAM").size(22.0).strong().color(ACCENT));
+        ui.add_space(-8.0);
+        ui.label(RichText::new("Forge").size(22.0).strong());
+        ui.add_space(12.0);
+        for (i, t) in Tab::visible().iter().enumerate() {
+            let r = ui.selectable_label(self.tab == *t, RichText::new(t.title()).size(15.0));
+            if r.on_hover_text(tf!("Strg+{}", "Ctrl+{}", i + 1)).clicked() {
+                self.tab = *t;
+            }
+        }
+    }
+
+    /// Buttons on the right of the top bar (laid out right to left).
+    fn top_actions(&mut self, ui: &mut egui::Ui) {
+        // Boot edition: there is no desktop, so power off / reboot live here.
+        if boot_edition() {
+            if ui
+                .add_enabled(!self.busy(), egui::Button::new(t!("⏻ Aus", "⏻ Off")))
+                .on_hover_text(t!("Rechner ausschalten", "Power off the computer"))
+                .clicked()
+            {
+                power("poweroff");
+            }
+            if ui
+                .add_enabled(
+                    !self.busy(),
+                    egui::Button::new(t!("⟳ Neustart", "⟳ Restart")),
+                )
+                .on_hover_text(t!("Rechner neu starten", "Restart the computer"))
+                .clicked()
+            {
+                power("reboot");
+            }
+            ui.separator();
+        }
+        // Language: both choices visible, the current one highlighted.
+        // (right-to-left layout: EN is added first so it ends up on the right)
+        for (code, label, tip) in [("en", "EN", "English"), ("de", "DE", "Deutsch")] {
+            if ui
+                .selectable_label(ramforge_i18n::code() == code, label)
+                .on_hover_text(tip)
+                .clicked()
+            {
+                ramforge_i18n::set(ramforge_i18n::resolve(code));
+                self.settings.language = code.into();
+                self.save_settings();
+            }
+        }
+        let (icon, next, tip) = match self.settings.theme.as_str() {
+            "light" => ("🌙", "dark", t!("Dunkles Design", "Dark theme")),
+            _ => ("☀", "light", t!("Helles Design", "Light theme")),
+        };
+        if ui.button(icon).on_hover_text(tip).clicked() {
+            self.settings.theme = next.into();
+            apply_theme(ui.ctx(), next);
+            self.save_settings();
+        }
+        let unread = self.unread_news();
+        if unread > 0
+            && ui
+                .button(RichText::new(tf!("📰 {unread} neu", "📰 {unread} new")).color(ACCENT))
+                .on_hover_text(t!("Neuigkeiten anzeigen", "Show news"))
+                .clicked()
+        {
+            self.tab = Tab::About;
+        }
+        if ui.button("📷").on_hover_text("Screenshot (F12)").clicked() {
+            let ctx = ui.ctx().clone();
+            self.screenshot(&ctx);
+        }
+        if ui
+            .button(t!("💾 Bericht", "💾 Report"))
+            .on_hover_text(t!(
+                "Bericht als HTML, JSON und TXT speichern (Strg+S)",
+                "Save report as HTML, JSON and TXT (Ctrl+S)"
+            ))
+            .clicked()
+        {
+            self.save_report();
+        }
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -1320,8 +1469,8 @@ impl RamForgeApp {
         {
             ui.label(
                 RichText::new(
-                    "⚠ Berichte und Logs liegen nur im Arbeitsspeicher und gehen beim Ausschalten verloren. \
-                     Mit RAMForge-USB.exe eingerichtete Sticks speichern sie in RAMForge\\RAMForge-data.",
+                    t!("⚠ Berichte und Logs liegen nur im Arbeitsspeicher und gehen beim Ausschalten verloren. \
+                     Mit RAMForge-USB.exe eingerichtete Sticks speichern sie in RAMForge\\RAMForge-data.", "⚠ Reports and logs are only kept in memory and are lost at power-off. Sticks set up with RAMForge-USB.exe store them in RAMForge\\RAMForge-data."),
                 )
                 .color(WARN)
                 .strong(),
@@ -1334,8 +1483,9 @@ impl RamForgeApp {
             }
             if let Some(p) = self.hub.recording_path() {
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(tf!(
                         "● Aufzeichnung {}",
+                        "● Recording {}",
                         p.file_name().unwrap_or_default().to_string_lossy()
                     ))
                     .small()
@@ -1345,9 +1495,12 @@ impl RamForgeApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new("F5 Start · Esc Stopp · F12 Screenshot · Strg+S Bericht")
-                        .small()
-                        .weak(),
+                    RichText::new(t!(
+                        "F5 Start · Esc Stopp · F12 Screenshot · Strg+S Bericht",
+                        "F5 start · Esc stop · F12 screenshot · Ctrl+S report"
+                    ))
+                    .small()
+                    .weak(),
                 );
             });
         });
@@ -1362,29 +1515,33 @@ impl RamForgeApp {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(if running {
-                        "RAM-Test läuft"
+                        t!("RAM-Test läuft", "RAM test running")
                     } else {
-                        "RAM-Test beendet"
+                        t!("RAM-Test beendet", "RAM test finished")
                     })
                     .strong(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let c = if errors > 0 { BAD } else { OK };
-                    ui.label(RichText::new(format!("{errors} Fehler")).strong().color(c));
+                    ui.label(
+                        RichText::new(tf!("{errors} Fehler", "{errors} errors"))
+                            .strong()
+                            .color(c),
+                    );
                 });
             });
             if running {
-                ui.add(
-                    egui::ProgressBar::new(run.pass_fraction() as f32).text(format!(
-                        "Durchlauf {} · {:.0} %",
-                        run.pass.load(Ordering::Relaxed) + 1,
-                        run.pass_fraction() * 100.0
-                    )),
-                );
+                ui.add(egui::ProgressBar::new(run.pass_fraction() as f32).text(tf!(
+                    "Durchlauf {} · {:.0} %",
+                    "Pass {} · {:.0} %",
+                    run.pass.load(Ordering::Relaxed) + 1,
+                    run.pass_fraction() * 100.0
+                )));
                 ui.label(RichText::new(run.current_test().map(|t| t.name()).unwrap_or("")).small());
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(tf!(
                         "Laufzeit {}",
+                        "Running time {}",
                         report::duration(run.elapsed().as_secs_f64())
                     ))
                     .small()
@@ -1393,11 +1550,11 @@ impl RamForgeApp {
             }
             ui.separator();
         }
-        ui.label(RichText::new("Sensoren live").strong());
+        ui.label(RichText::new(t!("Sensoren live", "Live sensors")).strong());
         let snap = self.hub.snapshot_light();
         let keys = key_sensors(&snap, &self.settings.pinned_sensors);
         if keys.is_empty() {
-            ui.label(RichText::new("Noch keine Werte…").weak());
+            ui.label(RichText::new(t!("Noch keine Werte…", "No values yet…")).weak());
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             let mut last_group = None;
@@ -1425,23 +1582,40 @@ impl RamForgeApp {
             if !snap.iter().any(|s| s.reading.kind == SensorKind::Temperature) {
                 ui.add_space(8.0);
                 let hint = if cfg!(windows) {
-                    "Keine Temperaturen verfügbar. Unter Windows: HWiNFO64 starten und „Shared Memory Support“ aktivieren, dann erscheinen CPU-, RAM- und Board-Sensoren hier automatisch."
+                    t!("Keine Temperaturen verfügbar. Unter Windows: HWiNFO64 starten und „Shared Memory Support“ aktivieren, dann erscheinen CPU-, RAM- und Board-Sensoren hier automatisch.", "No temperatures available. On Windows: start HWiNFO64 and enable “Shared Memory Support”, then CPU, RAM and board sensors appear here automatically.")
                 } else {
-                    "Keine Temperaturen verfügbar. Linux hat für dieses System keine Sensor-Treiber (hwmon) geladen. In virtuellen Maschinen ist das normal."
+                    t!("Keine Temperaturen verfügbar. Linux hat für dieses System keine Sensor-Treiber (hwmon) geladen. In virtuellen Maschinen ist das normal.", "No temperatures available. Linux has not loaded any sensor drivers (hwmon) for this system. This is normal in virtual machines.")
                 };
                 ui.label(RichText::new(hint).small().weak());
             }
             ui.add_space(6.0);
-            ui.label(RichText::new("Weitere Werte im Tab Sensoren anheften (📌).").small().weak());
+            ui.label(RichText::new(t!("Weitere Werte im Tab Sensoren anheften (📌).", "Pin more values in the Sensors tab (📌).")).small().weak());
         });
     }
 
     fn disclaimer_modal(&mut self, ctx: &egui::Context) {
+        // Small screens (firmware framebuffer 800x600 in the boot system): the
+        // text scrolls, checkboxes and buttons below it always stay visible.
+        let screen = ctx.content_rect();
+        let text_height = (screen.height() - 330.0).clamp(100.0, 440.0);
         egui::Modal::new(egui::Id::unique("disclaimer")).show(ctx, |ui| {
-            ui.set_max_width(760.0);
-            ui.label(RichText::new("Bitte vor der ersten Nutzung lesen / Please read before first use").size(18.0).strong());
+            ui.set_max_width(760.0_f32.min(screen.width() - 60.0));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Bitte vor der ersten Nutzung lesen / Please read before first use").size(18.0).strong());
+                // Language choice right on the first screen (boot edition starts in
+                // English); saved like the switch in the top bar.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    for (code, label) in [("en", "English"), ("de", "Deutsch")] {
+                        if ui.selectable_label(ramforge_i18n::code() == code, label).clicked() {
+                            ramforge_i18n::set(ramforge_i18n::resolve(code));
+                            self.settings.language = code.into();
+                            self.save_settings();
+                        }
+                    }
+                });
+            });
             ui.add_space(6.0);
-            egui::ScrollArea::vertical().max_height(440.0).show(ui, |ui| md_view(ui, DISCLAIMER_MD));
+            egui::ScrollArea::vertical().max_height(text_height).show(ui, |ui| md_view(ui, DISCLAIMER_MD));
             ui.separator();
             ui.checkbox(
                 &mut self.disclaimer_check,
@@ -1450,16 +1624,18 @@ impl RamForgeApp {
             ui.add_space(6.0);
             ui.checkbox(&mut self.stats_choice, "Freiwillig: anonyme Nutzungsstatistik senden / Optional: send anonymous usage statistics");
             ui.label(
-                RichText::new(
-                    "Höchstens einmal am Tag: eine zufällige Installations-ID (nicht aus der Hardware abgeleitet), Programmversion, Edition und grobe Windows-Version (z. B. „Windows 11“). \
+                RichText::new(t!(
+                    "Höchstens einmal am Tag: eine zufällige Installations-ID (nicht aus der Hardware abgeleitet), Programmversion, Edition und grobe Betriebssystem-Version (z. B. „Windows 11“, im Boot-System „Debian 12“). \
                      Der Server bestimmt daraus nur das Land und verwirft die IP-Adresse. Keine Hardwaredaten, Seriennummern, Ergebnisse oder Logs. Jederzeit im Tab „Über“ widerrufbar.",
-                )
+                    "At most once a day: a random installation ID (not derived from the hardware), program version, edition and rough operating system version (e.g. “Windows 11”, “Debian 12” in the boot system). \
+                     The server only derives the country from it and discards the IP address. No hardware data, serial numbers, results or logs. Can be revoked at any time in the “About” tab."
+                ))
                 .small()
                 .weak(),
             );
             ui.horizontal(|ui| {
-                ui.hyperlink_to(RichText::new("Datenschutz").small(), URL_PRIVACY);
-                ui.hyperlink_to(RichText::new("Haftungsausschluss online").small(), URL_DISCLAIMER);
+                ui.hyperlink_to(RichText::new(t!("Datenschutz", "Privacy")).small(), URL_PRIVACY);
+                ui.hyperlink_to(RichText::new(t!("Haftungsausschluss online", "Disclaimer online")).small(), URL_DISCLAIMER);
             });
             ui.horizontal(|ui| {
                 if ui.add_enabled(self.disclaimer_check, egui::Button::new("Akzeptieren / Accept")).clicked() {
@@ -1482,13 +1658,17 @@ impl RamForgeApp {
     fn tab_system(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             heading(ui, "System");
-            if ui.button("⟳ Neu einlesen").clicked() {
+            if ui.button(t!("⟳ Neu einlesen", "⟳ Reload")).clicked() {
                 self.sys = ramforge_hw::collect();
-                self.log.info("Systeminformationen neu eingelesen");
+                self.log.info(t!(
+                    "Systeminformationen neu eingelesen",
+                    "System information reloaded"
+                ));
             }
         });
         let s = &self.sys;
-        egui::Grid::new("sys")
+        wide(ui, |ui| {
+            egui::Grid::new("sys")
             .num_columns(2)
             .striped(true)
             .show(ui, |ui| {
@@ -1497,29 +1677,27 @@ impl RamForgeApp {
                     ui.label(v);
                     ui.end_row();
                 };
-                row("Betriebssystem", s.os.clone());
-                row("Prozessor", s.cpu.brand.clone());
+                row(t!("Betriebssystem", "Operating system"), s.os.clone());
+                row(t!("Prozessor", "Processor"), s.cpu.brand.clone());
                 row(
-                    "CPU-Details",
-                    format!(
-                        "{} · Familie {:X}h Modell {:X}h Stepping {} · {} Threads{}",
+                    t!("CPU-Details", "CPU details"),
+                    tf!("{} · Familie {:X}h Modell {:X}h Stepping {} · {} Threads{}", "{} · family {:X}h model {:X}h stepping {} · {} threads{}",
                         s.cpu.vendor,
                         s.cpu.family,
                         s.cpu.model,
                         s.cpu.stepping,
                         s.cpu.logical_processors,
                         if s.cpu.hypervisor {
-                            " · Hypervisor aktiv (VM oder Hyper-V/VBS)"
+                            t!(" · Hypervisor aktiv (VM oder Hyper-V/VBS)", " · hypervisor active (VM or Hyper-V/VBS)")
                         } else {
                             ""
                         }
                     ),
                 );
-                row("Befehlssätze", s.cpu.features.join(", "));
+                row(t!("Befehlssätze", "Instruction sets"), s.cpu.features.join(", "));
                 row(
-                    "Arbeitsspeicher",
-                    format!(
-                        "{} gesamt, {} frei",
+                    t!("Arbeitsspeicher", "Memory"),
+                    tf!("{} gesamt, {} frei", "{} total, {} free",
                         report::gib(s.memory.total_bytes),
                         report::gib(s.memory.available_bytes)
                     ),
@@ -1542,9 +1720,8 @@ impl RamForgeApp {
                     );
                     for c in &b.processors {
                         row(
-                            "CPU-Sockel",
-                            format!(
-                                "{}: {} Kerne / {} Threads, Basistakt {} MHz, Referenztakt {} MHz",
+                            t!("CPU-Sockel", "CPU sockets"),
+                            tf!("{}: {} Kerne / {} Threads, Basistakt {} MHz, Referenztakt {} MHz", "{}: {} cores / {} threads, base clock {} MHz, reference clock {} MHz",
                                 c.socket,
                                 c.cores,
                                 c.threads,
@@ -1555,85 +1732,95 @@ impl RamForgeApp {
                     }
                     let used = b.memory.iter().filter(|m| m.is_installed()).count();
                     row(
-                        "Speicherplätze",
-                        format!(
-                            "{used} von {} belegt · max. {} laut Firmware · SMBIOS {}",
+                        t!("Speicherplätze", "Memory slots"),
+                        tf!("{used} von {} belegt · max. {} laut Firmware · SMBIOS {}", "{used} of {} in use · max. {} per firmware · SMBIOS {}",
                             b.memory_slots_total.max(b.memory.len() as u32),
                             report::gib(b.memory_max_capacity_bytes),
                             b.version
                         ),
                     );
                 }
-            });
+            })
+        });
         if let Some(b) = &s.smbios {
-            heading(ui, "Speichermodule");
-            ui.checkbox(&mut self.show_serials, "Seriennummern anzeigen");
-            egui::Grid::new("dimms")
-                .num_columns(10)
-                .striped(true)
-                .show(ui, |ui| {
-                    for h in [
-                        "Steckplatz",
-                        "Größe",
-                        "Typ",
-                        "Nenntakt",
-                        "Ist-Takt",
-                        "Spannung",
-                        "Ranks",
-                        "ECC",
-                        "Hersteller",
-                        "Teilenummer / Serie",
-                    ] {
-                        ui.label(RichText::new(h).strong());
-                    }
-                    ui.end_row();
-                    for m in &b.memory {
-                        ui.label(format!("{} {}", m.bank, m.locator).trim());
-                        if !m.is_installed() {
-                            ui.label(RichText::new("leer").weak());
-                            for _ in 0..8 {
-                                ui.label("");
-                            }
-                            ui.end_row();
-                            continue;
+            heading(ui, t!("Speichermodule", "Memory modules"));
+            ui.checkbox(
+                &mut self.show_serials,
+                t!("Seriennummern anzeigen", "Show serial numbers"),
+            );
+            wide(ui, |ui| {
+                egui::Grid::new("dimms")
+                    .num_columns(10)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for h in [
+                            t!("Steckplatz", "Slot"),
+                            t!("Größe", "Size"),
+                            t!("Typ", "Type"),
+                            t!("Nenntakt", "Rated speed"),
+                            t!("Ist-Takt", "Actual speed"),
+                            t!("Spannung", "Voltage"),
+                            "Ranks",
+                            "ECC",
+                            t!("Hersteller", "Manufacturer"),
+                            t!("Teilenummer / Serie", "Part number / serial"),
+                        ] {
+                            ui.label(RichText::new(h).strong());
                         }
-                        ui.label(report::gib(m.size_bytes));
-                        ui.label(format!("{} {}", m.memory_type, m.form_factor));
-                        ui.label(format!("{} MT/s", m.speed_mts));
-                        let c =
-                            if m.configured_speed_mts > 0 && m.configured_speed_mts < m.speed_mts {
+                        ui.end_row();
+                        for m in &b.memory {
+                            ui.label(format!("{} {}", m.bank, m.locator).trim());
+                            if !m.is_installed() {
+                                ui.label(RichText::new(t!("leer", "empty")).weak());
+                                for _ in 0..8 {
+                                    ui.label("");
+                                }
+                                ui.end_row();
+                                continue;
+                            }
+                            ui.label(report::gib(m.size_bytes));
+                            ui.label(format!("{} {}", m.memory_type, m.form_factor));
+                            ui.label(format!("{} MT/s", m.speed_mts));
+                            let c = if m.configured_speed_mts > 0
+                                && m.configured_speed_mts < m.speed_mts
+                            {
                                 WARN
                             } else {
                                 ui.visuals().text_color()
                             };
-                        ui.label(
-                            RichText::new(format!("{} MT/s", m.configured_speed_mts)).color(c),
-                        );
-                        ui.label(if m.configured_voltage_mv > 0 {
-                            format!("{:.3} V", m.configured_voltage_mv as f64 / 1000.0)
-                        } else {
-                            "–".into()
-                        });
-                        ui.label(if m.ranks > 0 {
-                            m.ranks.to_string()
-                        } else {
-                            "–".into()
-                        });
-                        ui.label(if m.has_ecc() { "ja" } else { "nein" });
-                        ui.label(&m.manufacturer);
-                        ui.label(if self.show_serials {
-                            format!("{}  /  {}", m.part_number, m.serial)
-                        } else {
-                            m.part_number.clone()
-                        });
-                        ui.end_row();
-                    }
-                });
+                            ui.label(
+                                RichText::new(format!("{} MT/s", m.configured_speed_mts)).color(c),
+                            );
+                            ui.label(if m.configured_voltage_mv > 0 {
+                                format!("{:.3} V", m.configured_voltage_mv as f64 / 1000.0)
+                            } else {
+                                "–".into()
+                            });
+                            ui.label(if m.ranks > 0 {
+                                m.ranks.to_string()
+                            } else {
+                                "–".into()
+                            });
+                            ui.label(if m.has_ecc() {
+                                t!("ja", "yes")
+                            } else {
+                                t!("nein", "no")
+                            });
+                            ui.label(&m.manufacturer);
+                            ui.label(if self.show_serials {
+                                format!("{}  /  {}", m.part_number, m.serial)
+                            } else {
+                                m.part_number.clone()
+                            });
+                            ui.end_row();
+                        }
+                    })
+            });
             ui.add_space(6.0);
             ui.label(
                 RichText::new(
-                    "Nenn- und Ist-Takt sowie Spannung stammen aus der Firmware (SMBIOS). Ein Ist-Takt unter dem Nenntakt heißt meist: XMP/EXPO ist im BIOS nicht aktiv. \
-                     Timings, SPD-Inhalt und XMP/EXPO-Profile: siehe Tab SPD. Unter Windows liefert HWiNFO (Shared Memory) die aktuellen Timings im Tab Sensoren.",
+                    t!("Nenn- und Ist-Takt sowie Spannung stammen aus der Firmware (SMBIOS). Ein Ist-Takt unter dem Nenntakt heißt meist: XMP/EXPO ist im BIOS nicht aktiv. \
+                     Timings, SPD-Inhalt und XMP/EXPO-Profile: siehe Tab SPD. Unter Windows liefert HWiNFO (Shared Memory) die aktuellen Timings im Tab Sensoren.", "Rated and actual speed and voltage come from the firmware (SMBIOS). An actual speed below the rated speed usually means XMP/EXPO is not enabled in the BIOS. Timings, SPD content and XMP/EXPO profiles: see the SPD tab. On Windows, HWiNFO (shared memory) provides the current timings in the Sensors tab."),
                 )
                 .small()
                 .weak(),
@@ -1642,12 +1829,12 @@ impl RamForgeApp {
     }
 
     fn tab_test(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "RAM-Test");
+        heading(ui, t!("RAM-Test", "RAM test"));
         let running = self.running();
         let avail = ramforge_core::mem::mem_status().available_bytes;
         ui.add_enabled_ui(!self.busy(), |ui| {
             egui::Grid::new("testcfg").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-                ui.label("Profil");
+                ui.label(t!("Profil", "Profile"));
                 ui.horizontal(|ui| {
                     for p in Preset::ALL {
                         if ui.selectable_label(self.preset == Some(p), p.name()).clicked() {
@@ -1655,7 +1842,7 @@ impl RamForgeApp {
                             self.passes = p.passes();
                         }
                     }
-                    if ui.selectable_label(self.preset.is_none(), "Eigene Auswahl").clicked() {
+                    if ui.selectable_label(self.preset.is_none(), t!("Eigene Auswahl", "Custom selection")).clicked() {
                         self.preset = None;
                     }
                 });
@@ -1680,13 +1867,13 @@ impl RamForgeApp {
                 });
                 ui.end_row();
 
-                ui.label("Speicher");
+                ui.label(t!("Speicher", "Memory"));
                 ui.horizontal(|ui| {
                     if ui.add(egui::Slider::new(&mut self.settings.mem_percent, 10.0..=95.0).suffix(" %")).changed() {
                         self.save_settings();
                     }
                     let bytes = (avail as f64 * self.settings.mem_percent as f64 / 100.0) as u64;
-                    ui.label(format!("≈ {} von {} frei", report::gib(bytes), report::gib(avail)));
+                    ui.label(tf!("≈ {} von {} frei", "≈ {} of {} free", report::gib(bytes), report::gib(avail)));
                 });
                 ui.end_row();
 
@@ -1694,39 +1881,42 @@ impl RamForgeApp {
                 ui.add(egui::Slider::new(&mut self.threads, 1..=self.sys.cpu.logical_processors.max(1)));
                 ui.end_row();
 
-                ui.label("Durchläufe");
+                ui.label(t!("Durchläufe", "Passes"));
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut self.passes).range(0..=10_000));
-                    ui.label(RichText::new(if self.passes == 0 { "endlos, bis Stopp" } else { "0 = endlos" }).weak());
+                    ui.label(RichText::new(if self.passes == 0 { t!("endlos, bis Stopp", "endless, until stopped") } else { t!("0 = endlos", "0 = endless") }).weak());
                 });
                 ui.end_row();
 
-                ui.label("Bit-Fade-Wartezeit");
+                ui.label(t!("Bit-Fade-Wartezeit", "Bit fade wait"));
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut self.bitfade_secs).range(1..=7200).suffix(" s"));
-                    ui.label(RichText::new("je Muster, nur für Bit Fade").weak());
+                    ui.label(RichText::new(t!("je Muster, nur für Bit Fade", "per pattern, bit fade only")).weak());
                 });
                 ui.end_row();
 
-                ui.vertical(|ui| ui.label("Sensoren"));
+                ui.vertical(|ui| ui.label(t!("Sensoren", "Sensors")));
                 ui.vertical(|ui| self.record_controls(ui));
                 ui.end_row();
 
-                ui.vertical(|ui| ui.label("Optionen"));
+                ui.vertical(|ui| ui.label(t!("Optionen", "Options")));
                 ui.vertical(|ui| {
-                    ui.checkbox(&mut self.lock_memory, "Testspeicher im RAM sperren (empfohlen, verhindert Auslagern)");
-                    ui.checkbox(&mut self.stop_on_error, "Beim ersten Fehler anhalten");
-                    ui.checkbox(&mut self.inject_fault, "Selbsttest: einen künstlichen Bitfehler einspeisen")
-                        .on_hover_text("Prüft, ob Fehlererkennung, Protokoll und Bericht funktionieren. Der Fehler ist als „Selbsttest“ markiert.");
+                    ui.checkbox(&mut self.lock_memory, t!("Testspeicher im RAM sperren (empfohlen, verhindert Auslagern)", "Lock test memory in RAM (recommended, prevents paging)"));
+                    ui.checkbox(&mut self.stop_on_error, t!("Beim ersten Fehler anhalten", "Stop at the first error"));
+                    ui.checkbox(&mut self.inject_fault, t!("Selbsttest: einen künstlichen Bitfehler einspeisen", "Self-test: inject an artificial bit error"))
+                        .on_hover_text(t!("Prüft, ob Fehlererkennung, Protokoll und Bericht funktionieren. Der Fehler ist als „Selbsttest“ markiert.", "Checks that error detection, log and report work. The error is marked as “self-test”."));
                 });
                 ui.end_row();
             });
         });
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let start =
-                egui::Button::new(RichText::new("▶  Test starten (F5)").size(16.0).strong())
-                    .fill(ACCENT);
+            let start = egui::Button::new(
+                RichText::new(t!("▶  Test starten (F5)", "▶  Start test (F5)"))
+                    .size(16.0)
+                    .strong(),
+            )
+            .fill(ACCENT);
             if ui
                 .add_enabled(!self.busy() && self.accepted(), start)
                 .clicked()
@@ -1736,7 +1926,9 @@ impl RamForgeApp {
             if ui
                 .add_enabled(
                     running,
-                    egui::Button::new(RichText::new("⏹  Stopp (Esc)").size(16.0)),
+                    egui::Button::new(
+                        RichText::new(t!("⏹  Stopp (Esc)", "⏹  Stop (Esc)")).size(16.0),
+                    ),
                 )
                 .clicked()
             {
@@ -1744,9 +1936,9 @@ impl RamForgeApp {
             }
         });
         let hint = if cfg!(windows) {
-            "Unter Windows bleiben einige hundert MB für das System reserviert. Für 100 % Abdeckung gibt es die Boot-Variante."
+            t!("Unter Windows bleiben einige hundert MB für das System reserviert. Für 100 % Abdeckung gibt es die Boot-Variante.", "On Windows a few hundred MB stay reserved for the system. For 100 % coverage use the boot version.")
         } else {
-            "Ausgenommen ist nur der Speicher, den Linux und die Oberfläche selbst belegen (einige hundert MB)."
+            t!("Ausgenommen ist nur der Speicher, den Linux und die Oberfläche selbst belegen (einige hundert MB).", "Only the memory used by Linux and the interface itself is excluded (a few hundred MB).")
         };
         ui.label(RichText::new(hint).small().weak());
 
@@ -1758,8 +1950,9 @@ impl RamForgeApp {
                 ui.add(
                     egui::ProgressBar::new(run.pass_fraction() as f32)
                         .show_percentage()
-                        .text(format!(
+                        .text(tf!(
                             "Durchlauf {} von {}",
+                            "Pass {} of {}",
                             run.pass.load(Ordering::Relaxed) + 1,
                             if run.config.passes == 0 {
                                 "∞".to_string()
@@ -1771,51 +1964,55 @@ impl RamForgeApp {
                 ui.add(
                     egui::ProgressBar::new(run.test_fraction() as f32)
                         .show_percentage()
-                        .text(format!(
+                        .text(tf!(
                             "Test {} von {}: {}",
+                            "Test {} of {}: {}",
                             run.test_index.load(Ordering::Relaxed) + 1,
                             run.config.tests.len(),
                             run.current_test().map(|t| t.name()).unwrap_or("")
                         )),
                 );
             }
-            egui::Grid::new("runinfo").num_columns(2).show(ui, |ui| {
-                ui.label(RichText::new("Laufzeit").weak());
-                ui.label(report::duration(run.elapsed().as_secs_f64()));
-                ui.end_row();
-                ui.label(RichText::new("Getestet").weak());
-                ui.label(format!(
-                    "{} mit {} Threads{}",
-                    report::gib(run.allocated_bytes.load(Ordering::Relaxed)),
-                    run.config.threads,
-                    if run.all_locked.load(Ordering::Relaxed) {
-                        ", gesperrt"
-                    } else {
-                        ", nicht vollständig gesperrt"
-                    }
-                ));
-                ui.end_row();
-                ui.label(RichText::new("Fehler").weak());
-                let n = run.sink.count();
-                ui.label(
-                    RichText::new(n.to_string())
-                        .size(18.0)
-                        .strong()
-                        .color(if n > 0 { BAD } else { OK }),
-                );
-                ui.end_row();
+            wide(ui, |ui| {
+                egui::Grid::new("runinfo").num_columns(2).show(ui, |ui| {
+                    ui.label(RichText::new(t!("Laufzeit", "Running time")).weak());
+                    ui.label(report::duration(run.elapsed().as_secs_f64()));
+                    ui.end_row();
+                    ui.label(RichText::new(t!("Getestet", "Tested")).weak());
+                    ui.label(tf!(
+                        "{} mit {} Threads{}",
+                        "{} with {} threads{}",
+                        report::gib(run.allocated_bytes.load(Ordering::Relaxed)),
+                        run.config.threads,
+                        if run.all_locked.load(Ordering::Relaxed) {
+                            t!(", gesperrt", ", locked")
+                        } else {
+                            t!(", nicht vollständig gesperrt", ", not fully locked")
+                        }
+                    ));
+                    ui.end_row();
+                    ui.label(RichText::new(t!("Fehler", "Errors")).weak());
+                    let n = run.sink.count();
+                    ui.label(
+                        RichText::new(n.to_string())
+                            .size(18.0)
+                            .strong()
+                            .color(if n > 0 { BAD } else { OK }),
+                    );
+                    ui.end_row();
+                })
             });
             if let (Some(s), false) = (&self.last_summary, running) {
                 let (c, t) = match s.outcome {
                     Outcome::Passed => (OK, "BESTANDEN"),
-                    Outcome::Failed => (BAD, "FEHLER GEFUNDEN"),
+                    Outcome::Failed => (BAD, t!("FEHLER GEFUNDEN", "ERRORS FOUND")),
                     Outcome::Cancelled => (WARN, "ABGEBROCHEN"),
-                    Outcome::Aborted => (BAD, "NICHT GESTARTET"),
+                    Outcome::Aborted => (BAD, t!("NICHT GESTARTET", "NOT STARTED")),
                 };
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(t).size(20.0).strong().color(c));
                     if let Some(p) = &self.last_report {
-                        if ui.button("Bericht öffnen").clicked() {
+                        if ui.button(t!("Bericht öffnen", "Open report")).clicked() {
                             paths::open_folder(p);
                         }
                     }
@@ -1830,12 +2027,13 @@ impl RamForgeApp {
             }
         }
         if !self.errors.is_empty() {
-            heading(ui, "Betroffene Datenbits");
+            heading(ui, t!("Betroffene Datenbits", "Affected data bits"));
             self.bit_strip(ui);
             heading(
                 ui,
-                &format!(
+                &tf!(
                     "Fehler ({} gesamt, die neuesten 500)",
+                    "Errors ({} in total, the latest 500)",
                     self.run.as_ref().map(|r| r.sink.count()).unwrap_or(0)
                 ),
             );
@@ -1843,35 +2041,47 @@ impl RamForgeApp {
                 .id_salt("errs")
                 .max_height(320.0)
                 .show(ui, |ui| {
-                    egui::Grid::new("errtab")
-                        .num_columns(8)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for h in [
-                                "Zeit", "Test", "Durchl.", "Thread", "Adresse", "Soll", "Ist",
-                                "Bits",
-                            ] {
-                                ui.label(RichText::new(h).strong());
-                            }
-                            ui.end_row();
-                            for e in self.errors.iter().rev().take(500) {
-                                ui.label(e.time.format("%H:%M:%S").to_string());
-                                ui.label(if e.simulated {
-                                    format!("{} (Selbsttest)", e.test)
-                                } else {
-                                    e.test.clone()
-                                });
-                                ui.label((e.pass + 1).to_string());
-                                ui.label(e.thread.to_string());
-                                ui.monospace(format!("0x{:012X}", e.address));
-                                ui.monospace(format!("{:016X}", e.expected));
-                                ui.monospace(
-                                    RichText::new(format!("{:016X}", e.actual)).color(BAD),
-                                );
-                                ui.monospace(format!("{} ({:016X})", e.flipped_bits(), e.xor()));
+                    wide(ui, |ui| {
+                        egui::Grid::new("errtab")
+                            .num_columns(8)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for h in [
+                                    t!("Zeit", "Time"),
+                                    "Test",
+                                    t!("Durchl.", "Pass"),
+                                    "Thread",
+                                    t!("Adresse", "Address"),
+                                    t!("Soll", "Expected"),
+                                    t!("Ist", "Actual"),
+                                    "Bits",
+                                ] {
+                                    ui.label(RichText::new(h).strong());
+                                }
                                 ui.end_row();
-                            }
-                        });
+                                for e in self.errors.iter().rev().take(500) {
+                                    ui.label(e.time.format("%H:%M:%S").to_string());
+                                    ui.label(if e.simulated {
+                                        tf!("{} (Selbsttest)", "{} (self-test)", e.test)
+                                    } else {
+                                        e.test.clone()
+                                    });
+                                    ui.label((e.pass + 1).to_string());
+                                    ui.label(e.thread.to_string());
+                                    ui.monospace(format!("0x{:012X}", e.address));
+                                    ui.monospace(format!("{:016X}", e.expected));
+                                    ui.monospace(
+                                        RichText::new(format!("{:016X}", e.actual)).color(BAD),
+                                    );
+                                    ui.monospace(format!(
+                                        "{} ({:016X})",
+                                        e.flipped_bits(),
+                                        e.xor()
+                                    ));
+                                    ui.end_row();
+                                }
+                            })
+                    });
                 });
         }
     }
@@ -1890,10 +2100,10 @@ impl RamForgeApp {
                     BAD.gamma_multiply(0.35 + 0.65 * n as f32 / max)
                 };
                 ui.painter().rect_filled(rect, 2.0, col);
-                resp.on_hover_text(format!("Bit {b}: {n}× falsch"));
+                resp.on_hover_text(tf!("Bit {b}: {n}× falsch", "Bit {b}: {n}× wrong"));
             }
         });
-        ui.label(RichText::new("Bit 63 links … Bit 0 rechts. Immer dasselbe Bit deutet auf einen Chip bzw. eine Datenleitung, verstreute Bits eher auf Takt, Timings oder Spannung.").small().weak());
+        ui.label(RichText::new(t!("Bit 63 links … Bit 0 rechts. Immer dasselbe Bit deutet auf einen Chip bzw. eine Datenleitung, verstreute Bits eher auf Takt, Timings oder Spannung.", "Bit 63 left … bit 0 right. Always the same bit points to a chip or data line, scattered bits rather to clock, timings or voltage.")).small().weak());
     }
 
     fn tab_bench(&mut self, ui: &mut egui::Ui) {
@@ -1908,12 +2118,24 @@ impl RamForgeApp {
                         ui.horizontal(|ui| {
                             ui.checkbox(
                                 &mut self.bench_sel.cpu,
-                                "CPU (Ganzzahl, Gleitkomma, SIMD)",
+                                t!(
+                                    "CPU (Ganzzahl, Gleitkomma, SIMD)",
+                                    "CPU (integer, floating point, SIMD)"
+                                ),
                             );
-                            ui.checkbox(&mut self.bench_sel.ram, "RAM (Bandbreite, Latenz)");
-                            ui.checkbox(&mut self.bench_sel.stress, "CPU+RAM unter Last");
-                            ui.checkbox(&mut self.bench_sel.gpu, "GPU (Zusatzmodul)");
-                            if ui.button("Alle").clicked() {
+                            ui.checkbox(
+                                &mut self.bench_sel.ram,
+                                t!("RAM (Bandbreite, Latenz)", "RAM (bandwidth, latency)"),
+                            );
+                            ui.checkbox(
+                                &mut self.bench_sel.stress,
+                                t!("CPU+RAM unter Last", "CPU+RAM under load"),
+                            );
+                            ui.checkbox(
+                                &mut self.bench_sel.gpu,
+                                t!("GPU (Zusatzmodul)", "GPU (add-on module)"),
+                            );
+                            if ui.button(t!("Alle", "All")).clicked() {
                                 self.bench_sel = crate::benchsuite::Selection {
                                     cpu: true,
                                     ram: true,
@@ -1925,7 +2147,7 @@ impl RamForgeApp {
                         self.gpu_module_row(ui);
                     });
                     ui.end_row();
-                    ui.label("Dauer Last-Test");
+                    ui.label(t!("Dauer Last-Test", "Load test duration"));
                     ui.horizontal(|ui| {
                         for s in [30u64, 60, 120, 300] {
                             if ui
@@ -1943,14 +2165,14 @@ impl RamForgeApp {
                         1..=self.sys.cpu.logical_processors.max(1),
                     ));
                     ui.end_row();
-                    ui.label("Puffer je Thread");
+                    ui.label(t!("Puffer je Thread", "Buffer per thread"));
                     ui.add(egui::Slider::new(&mut self.bench_mib, 32..=1024).suffix(" MiB"));
                     ui.end_row();
                 });
         });
         ui.horizontal(|ui| {
             let b = egui::Button::new(
-                RichText::new("▶  Benchmark starten (F5)")
+                RichText::new(t!("▶  Benchmark starten (F5)", "▶  Start benchmark (F5)"))
                     .size(16.0)
                     .strong(),
             )
@@ -1959,7 +2181,10 @@ impl RamForgeApp {
                 self.start_bench();
             }
             if ui
-                .add_enabled(self.bench.is_some(), egui::Button::new("⏹  Abbrechen"))
+                .add_enabled(
+                    self.bench.is_some(),
+                    egui::Button::new(t!("⏹  Abbrechen", "⏹  Cancel")),
+                )
                 .clicked()
             {
                 self.stop_test();
@@ -1989,9 +2214,9 @@ impl RamForgeApp {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 for (name, v) in [
-                    ("Lesen", r.read_gbs),
-                    ("Schreiben", r.write_gbs),
-                    ("Kopieren", r.copy_gbs),
+                    (t!("Lesen", "Read"), r.read_gbs),
+                    (t!("Schreiben", "Write"), r.write_gbs),
+                    (t!("Kopieren", "Copy"), r.copy_gbs),
                 ] {
                     egui::Frame::group(ui.style())
                         .inner_margin(12.0)
@@ -2007,13 +2232,13 @@ impl RamForgeApp {
                         .inner_margin(12.0)
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("Latenz (RAM)").weak());
+                                ui.label(RichText::new(t!("Latenz (RAM)", "Latency (RAM)")).weak());
                                 ui.label(RichText::new(format!("{ns:.1} ns")).size(24.0).strong());
                             });
                         });
                 }
             });
-            heading(ui, "Latenz nach Blockgröße");
+            heading(ui, t!("Latenz nach Blockgröße", "Latency by block size"));
             let max = r.latency.iter().map(|l| l.1).fold(1.0, f64::max);
             egui::Grid::new("lat").num_columns(3).show(ui, |ui| {
                 for (size, ns) in &r.latency {
@@ -2024,10 +2249,9 @@ impl RamForgeApp {
                 }
             });
             ui.label(
-                RichText::new(format!(
-                    "{} Threads, {} Puffer, bester von 4 Durchläufen. Kleine Blöcke messen die CPU-Caches (L1/L2/L3), große den Arbeitsspeicher. „Kopieren“ zählt kopierte Bytes. \
+                RichText::new(tf!("{} Threads, {} Puffer, bester von 4 Durchläufen. Kleine Blöcke messen die CPU-Caches (L1/L2/L3), große den Arbeitsspeicher. „Kopieren“ zählt kopierte Bytes. \
                      Die Latenz enthält TLB-Fehlgriffe (normale 4-KiB-Seiten); Werkzeuge mit Large Pages zeigen niedrigere Werte. \
-                     Schreiben nutzt normale Stores ohne Non-Temporal-Optimierung.",
+                     Schreiben nutzt normale Stores ohne Non-Temporal-Optimierung.", "{} threads, {} buffer, best of 4 runs. Small blocks measure the CPU caches (L1/L2/L3), large ones the main memory. “Copy” counts copied bytes. Latency includes TLB misses (normal 4 KiB pages); tools using large pages show lower values. Write uses normal stores without non-temporal optimisation.",
                     r.threads,
                     report::gib(r.buffer_bytes)
                 ))
@@ -2038,7 +2262,13 @@ impl RamForgeApp {
         if self.bench.is_none() {
             if let Some(d) = self.sessions.iter().rev().find(|s| s.label == "bench") {
                 ui.separator();
-                heading(ui, "Sensoren während des Benchmarks");
+                heading(
+                    ui,
+                    t!(
+                        "Sensoren während des Benchmarks",
+                        "Sensors during the benchmark"
+                    ),
+                );
                 crate::chart::show(ui, d, &mut self.chart_bench, "chart-bench");
                 ui.separator();
             }
@@ -2050,8 +2280,11 @@ impl RamForgeApp {
         ui.label(RichText::new(run.settings_text()).small().weak());
         if run.cancelled {
             ui.label(
-                RichText::new("Abgebrochen – Ergebnisse unvollständig und nicht im Verlauf.")
-                    .color(WARN),
+                RichText::new(t!(
+                    "Abgebrochen – Ergebnisse unvollständig und nicht im Verlauf.",
+                    "Cancelled – results incomplete and not added to the history."
+                ))
+                .color(WARN),
             );
         }
         if !run.cpu.is_empty() {
@@ -2064,60 +2297,70 @@ impl RamForgeApp {
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(name).weak());
-                                ui.label(RichText::new(format!("{v} Punkte")).size(24.0).strong());
+                                ui.label(
+                                    RichText::new(tf!("{v} Punkte", "{v} points"))
+                                        .size(24.0)
+                                        .strong(),
+                                );
                             });
                         });
                 }
             });
-            egui::Grid::new("cpu-res")
-                .num_columns(7)
-                .striped(true)
-                .show(ui, |ui| {
-                    for h in [
-                        "Test",
-                        "Befehlssatz",
-                        "1 Thread",
-                        "Alle Threads",
-                        "Punkte 1T / nT",
-                        "Skalierung",
-                        "Prüfung",
-                    ] {
-                        ui.label(RichText::new(h).strong());
-                    }
-                    ui.end_row();
-                    for c in &run.cpu {
-                        ui.label(c.kind.name());
-                        ui.label(&c.variant);
-                        if let Some(why) = &c.skipped {
-                            ui.label(RichText::new(why).weak());
-                            for _ in 0..4 {
-                                ui.label("");
-                            }
-                        } else {
-                            ui.monospace(format!("{:.1} {}", c.single_raw, c.kind.unit()));
-                            ui.monospace(format!("{:.1} {}", c.multi_raw, c.kind.unit()));
-                            ui.monospace(format!("{} / {}", c.single_points, c.multi_points));
-                            ui.monospace(format!("{:.1}× ({} T)", c.scaling, c.threads));
-                        }
-                        if c.errors > 0 {
-                            ui.label(
-                                RichText::new(format!("{} Rechenfehler", c.errors))
-                                    .color(BAD)
-                                    .strong(),
-                            );
-                        } else {
-                            ui.label(RichText::new("ok").color(OK));
+            wide(ui, |ui| {
+                egui::Grid::new("cpu-res")
+                    .num_columns(7)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for h in [
+                            "Test",
+                            t!("Befehlssatz", "Instruction set"),
+                            "1 Thread",
+                            t!("Alle Threads", "All threads"),
+                            t!("Punkte 1T / nT", "Points 1T / nT"),
+                            t!("Skalierung", "Scaling"),
+                            t!("Prüfung", "Check"),
+                        ] {
+                            ui.label(RichText::new(h).strong());
                         }
                         ui.end_row();
-                    }
-                });
-            ui.label(RichText::new("Punkte: feste Arbeitslast, 1000 Punkte = Referenzwert. Jede Runde wird gegen eine Prüfsumme kontrolliert; Rechenfehler deuten auf instabile Übertaktung oder zu wenig Spannung.").small().weak());
+                        for c in &run.cpu {
+                            ui.label(c.kind.name());
+                            ui.label(&c.variant);
+                            if let Some(why) = &c.skipped {
+                                ui.label(RichText::new(why).weak());
+                                for _ in 0..4 {
+                                    ui.label("");
+                                }
+                            } else {
+                                ui.monospace(format!("{:.1} {}", c.single_raw, c.kind.unit()));
+                                ui.monospace(format!("{:.1} {}", c.multi_raw, c.kind.unit()));
+                                ui.monospace(format!("{} / {}", c.single_points, c.multi_points));
+                                ui.monospace(format!("{:.1}× ({} T)", c.scaling, c.threads));
+                            }
+                            if c.errors > 0 {
+                                ui.label(
+                                    RichText::new(tf!(
+                                        "{} Rechenfehler",
+                                        "{} calculation errors",
+                                        c.errors
+                                    ))
+                                    .color(BAD)
+                                    .strong(),
+                                );
+                            } else {
+                                ui.label(RichText::new("ok").color(OK));
+                            }
+                            ui.end_row();
+                        }
+                    })
+            });
+            ui.label(RichText::new(t!("Punkte: feste Arbeitslast, 1000 Punkte = Referenzwert. Jede Runde wird gegen eine Prüfsumme kontrolliert; Rechenfehler deuten auf instabile Übertaktung oder zu wenig Spannung.", "Points: fixed workload, 1000 points = reference. Every round is checked against a checksum; calculation errors point to an unstable overclock or too little voltage.")).small().weak());
         }
         if let Some(g) = &run.gpu {
             Self::gpu_results(ui, g);
         }
         if let Some(s) = &run.stress {
-            heading(ui, "CPU+RAM unter Last");
+            heading(ui, t!("CPU+RAM unter Last", "CPU+RAM under load"));
             ui.horizontal(|ui| {
                 for (name, v) in [
                     ("Ø", s.avg_gbs),
@@ -2137,7 +2380,7 @@ impl RamForgeApp {
                     .inner_margin(12.0)
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("Fehler").weak());
+                            ui.label(RichText::new(t!("Fehler", "Errors")).weak());
                             ui.label(
                                 RichText::new(s.errors.to_string())
                                     .size(22.0)
@@ -2164,8 +2407,7 @@ impl RamForgeApp {
                             .color(ACCENT),
                     )
                 });
-            ui.label(RichText::new(format!(
-                "Stabilität {:.0} % (langsamste Sekunde im Verhältnis zum Durchschnitt), {} geprüft, {} Threads, {}.",
+            ui.label(RichText::new(tf!("Stabilität {:.0} % (langsamste Sekunde im Verhältnis zum Durchschnitt), {} geprüft, {} Threads, {}.", "Stability {:.0} % (slowest second relative to the average), {} checked, {} threads, {}.",
                 s.stability() * 100.0,
                 report::gib(s.verified_bytes),
                 s.threads,
@@ -2179,8 +2421,9 @@ impl RamForgeApp {
         match ramforge_gpu::find_module() {
             Some(p) => {
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(tf!(
                         "GPU-Modul installiert: {}",
+                        "GPU module installed: {}",
                         p.file_name().unwrap_or_default().to_string_lossy()
                     ))
                     .small()
@@ -2190,15 +2433,20 @@ impl RamForgeApp {
             None => {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(
+                        RichText::new(t!(
                             "GPU-Benchmark ist ein Zusatzmodul (≈ 6 MB), nicht installiert.",
-                        )
+                            "The GPU benchmark is an add-on module (≈ 6 MB), not installed."
+                        ))
                         .small()
                         .weak(),
                     );
                     let busy = self.gpu_download.lock().unwrap().is_some();
                     if ui
-                        .add_enabled(!busy, egui::Button::new("GPU-Modul herunterladen").small())
+                        .add_enabled(
+                            !busy,
+                            egui::Button::new(t!("GPU-Modul herunterladen", "Download GPU module"))
+                                .small(),
+                        )
                         .clicked()
                     {
                         self.download_gpu_module();
@@ -2216,19 +2464,22 @@ impl RamForgeApp {
     fn download_gpu_module(&mut self) {
         let status = self.gpu_download.clone();
         let msgs = self.async_msgs.clone();
-        *status.lock().unwrap() = Some("lädt …".into());
+        *status.lock().unwrap() = Some(t!("lädt …", "downloading …").into());
         std::thread::spawn(move || {
             let res = (|| -> Result<String, String> {
                 let m = ramforge_update::fetch_verified_manifest().map_err(|e| e.to_string())?;
                 let asset = m
                     .assets
                     .get(ramforge_update::AssetKind::GpuModule.key())
-                    .ok_or("Das GPU-Modul ist für diese Version noch nicht veröffentlicht")?;
+                    .ok_or(t!(
+                        "Das GPU-Modul ist für diese Version noch nicht veröffentlicht",
+                        "The GPU module has not been released for this version yet"
+                    ))?;
                 ramforge_update::check_asset(asset).map_err(|e| e.to_string())?;
                 let dir = std::env::current_exe()
                     .map_err(|e| e.to_string())?
                     .parent()
-                    .ok_or("kein Programmordner")?
+                    .ok_or(t!("kein Programmordner", "no program folder"))?
                     .to_path_buf();
                 let tmp = dir.join(format!("{}.new", ramforge_gpu::MODULE_FILE));
                 let got =
@@ -2236,14 +2487,15 @@ impl RamForgeApp {
                         .map_err(|e| e.to_string())?;
                 std::fs::rename(&tmp, dir.join(ramforge_gpu::MODULE_FILE))
                     .map_err(|e| e.to_string())?;
-                Ok(format!(
+                Ok(tf!(
                     "GPU-Modul installiert (Quelle: {}, Signatur und SHA-256 geprüft)",
+                    "GPU module installed (source: {}, signature and SHA-256 verified)",
                     got.source
                 ))
             })();
             let (lvl, text) = match res {
                 Ok(t) => (Level::Info, t),
-                Err(e) => (Level::Warn, format!("GPU-Modul: {e}")),
+                Err(e) => (Level::Warn, tf!("GPU-Modul: {e}", "GPU module: {e}")),
             };
             msgs.lock().unwrap().push((lvl, text));
             *status.lock().unwrap() = None;
@@ -2257,9 +2509,13 @@ impl RamForgeApp {
             return;
         }
         ui.label(
-            RichText::new(format!(
+            RichText::new(tf!(
                 "{} · {} · {} · Treiber {}",
-                g.adapter, g.device_type, g.backend, g.driver
+                "{} · {} · {} · driver {}",
+                g.adapter,
+                g.device_type,
+                g.backend,
+                g.driver
             ))
             .small(),
         );
@@ -2267,8 +2523,8 @@ impl RamForgeApp {
             for (name, v) in [
                 ("VRAM", format!("{:.0} GB/s", g.vram_gbs)),
                 ("FP32 (FMA)", format!("{:.2} TFLOPS", g.fp32_tflops)),
-                ("zur GPU", format!("{:.1} GB/s", g.upload_gbs)),
-                ("zum PC", format!("{:.1} GB/s", g.download_gbs)),
+                (t!("zur GPU", "to GPU"), format!("{:.1} GB/s", g.upload_gbs)),
+                (t!("zum PC", "to PC"), format!("{:.1} GB/s", g.download_gbs)),
             ] {
                 egui::Frame::group(ui.style())
                     .inner_margin(12.0)
@@ -2283,10 +2539,10 @@ impl RamForgeApp {
                 .inner_margin(12.0)
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("Prüfung").weak());
+                        ui.label(RichText::new(t!("Prüfung", "Check")).weak());
                         ui.label(
                             RichText::new(if g.errors > 0 {
-                                format!("{} Fehler", g.errors)
+                                tf!("{} Fehler", "{} errors", g.errors)
                             } else {
                                 "ok".into()
                             })
@@ -2301,18 +2557,18 @@ impl RamForgeApp {
                     });
                 });
         });
-        ui.label(RichText::new("Eigene Arbeitslast über wgpu: VRAM zählt gelesene + geschriebene Bytes einer Kopie; FP32 misst 8 unabhängige FMA-Ketten je Thread und liegt unter dem Datenblatt-Spitzenwert; Übertragungen enthalten die Zwischenpuffer des Treibers. Kopierte Daten und Rechenergebnisse werden geprüft.").small().weak());
+        ui.label(RichText::new(t!("Eigene Arbeitslast über wgpu: VRAM zählt gelesene + geschriebene Bytes einer Kopie; FP32 misst 8 unabhängige FMA-Ketten je Thread und liegt unter dem Datenblatt-Spitzenwert; Übertragungen enthalten die Zwischenpuffer des Treibers. Kopierte Daten und Rechenergebnisse werden geprüft.", "Own workload via wgpu: VRAM counts read + written bytes of a copy; FP32 measures 8 independent FMA chains per thread and stays below the datasheet peak; transfers include the driver's staging buffers. Copied data and results are verified.")).small().weak());
     }
 
     fn bench_history_ui(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(RichText::new(format!("Verlauf ({} Läufe)", self.bench_history.len())).strong())
+        egui::CollapsingHeader::new(RichText::new(tf!("Verlauf ({} Läufe)", "History ({} runs)", self.bench_history.len())).strong())
             .id_salt("bench-history")
             .show(ui, |ui| {
-                ui.label(RichText::new("Vergleichbar sind nur Läufe mit gleicher Version und gleichen Einstellungen (≈ in der letzten Spalte). Die Notiz ist frei, z. B. „XMP an“.").small().weak());
+                ui.label(RichText::new(t!("Vergleichbar sind nur Läufe mit gleicher Version und gleichen Einstellungen (≈ in der letzten Spalte). Die Notiz ist frei, z. B. „XMP an“.", "Only runs with the same version and settings are comparable (≈ in the last column). The note is free text, e.g. “XMP on”.")).small().weak());
                 let last = self.bench_run.clone();
                 let mut changed = false;
-                egui::Grid::new("hist").num_columns(9).striped(true).show(ui, |ui| {
-                    for h in ["Datum", "CPU 1T / nT", "RAM Lesen", "Latenz", "Last Ø", "GPU VRAM / FP32", "Fehler", "Notiz", ""] {
+                wide(ui, |ui| egui::Grid::new("hist").num_columns(9).striped(true).show(ui, |ui| {
+                    for h in [t!("Datum", "Date"), "CPU 1T / nT", t!("RAM Lesen", "RAM read"), t!("Latenz", "Latency"), t!("Last Ø", "Load avg"), "GPU VRAM / FP32", t!("Fehler", "Errors"), t!("Notiz", "Note"), ""] {
                         ui.label(RichText::new(h).strong());
                     }
                     ui.end_row();
@@ -2336,10 +2592,10 @@ impl RamForgeApp {
                             changed = true;
                         }
                         let cmp = last.as_ref().map(|l| l.comparable(r)).unwrap_or(false);
-                        ui.label(if cmp { "≈" } else { "" }).on_hover_text("vergleichbar mit dem letzten Lauf");
+                        ui.label(if cmp { "≈" } else { "" }).on_hover_text(t!("vergleichbar mit dem letzten Lauf", "comparable with the last run"));
                         ui.end_row();
                     }
-                });
+                }));
                 if changed {
                     crate::benchsuite::save_history(&self.paths.root.join("bench-history.json"), &self.bench_history);
                 }
@@ -2347,9 +2603,9 @@ impl RamForgeApp {
     }
 
     fn tab_sensors(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Sensoren");
+        heading(ui, t!("Sensoren", "Sensors"));
         ui.horizontal(|ui| {
-            ui.label("Intervall");
+            ui.label(t!("Intervall", "Interval"));
             let mut ms = self.settings.sensor_interval_ms as f64;
             if ui
                 .add(
@@ -2366,10 +2622,14 @@ impl RamForgeApp {
             ui.separator();
             match self.hub.recording_path() {
                 Some(_) => {
-                    if ui.button("⏹ Aufzeichnung beenden").clicked() {
+                    if ui
+                        .button(t!("⏹ Aufzeichnung beenden", "⏹ Stop recording"))
+                        .clicked()
+                    {
                         if let Some((p, rows)) = self.hub.stop_recording() {
-                            self.log.info(format!(
+                            self.log.info(tf!(
                                 "Sensor-Aufzeichnung beendet: {rows} Zeilen in {}",
+                                "Sensor recording finished: {rows} rows in {}",
                                 p.display()
                             ));
                         }
@@ -2377,8 +2637,11 @@ impl RamForgeApp {
                 }
                 None => {
                     if ui
-                        .button("⏺ Aufzeichnen (CSV)")
-                        .on_hover_text("Während eines RAM-Tests wird automatisch aufgezeichnet")
+                        .button(t!("⏺ Aufzeichnen (CSV)", "⏺ Record (CSV)"))
+                        .on_hover_text(t!(
+                            "Während eines RAM-Tests wird automatisch aufgezeichnet",
+                            "Recording runs automatically during a RAM test"
+                        ))
                         .clicked()
                     {
                         let p = self
@@ -2386,41 +2649,52 @@ impl RamForgeApp {
                             .sensors
                             .join(format!("sensors-{}.csv", paths::stamp()));
                         match self.hub.start_recording(&p) {
-                            Ok(()) => self
-                                .log
-                                .info(format!("Sensor-Aufzeichnung: {}", p.display())),
-                            Err(e) => self.log.error(format!("Aufzeichnung fehlgeschlagen: {e}")),
+                            Ok(()) => self.log.info(tf!(
+                                "Sensor-Aufzeichnung: {}",
+                                "Sensor recording: {}",
+                                p.display()
+                            )),
+                            Err(e) => self.log.error(tf!(
+                                "Aufzeichnung fehlgeschlagen: {e}",
+                                "Recording failed: {e}"
+                            )),
                         }
                     }
                 }
             }
-            if ui.button("Min/Max zurücksetzen").clicked() {
+            if ui
+                .button(t!("Min/Max zurücksetzen", "Reset min/max"))
+                .clicked()
+            {
                 self.hub.reset_stats();
             }
-            if ui.button("📂 Ordner").clicked() {
+            if ui.button(t!("📂 Ordner", "📂 Folder")).clicked() {
                 paths::open_folder(&self.paths.sensors);
             }
         });
         ui.horizontal(|ui| {
             ui.label("Filter");
             ui.text_edit_singleline(&mut self.sensor_filter);
-            ui.checkbox(&mut self.show_threads, "Werte je Thread zeigen");
+            ui.checkbox(
+                &mut self.show_threads,
+                t!("Werte je Thread zeigen", "Show values per thread"),
+            );
         });
-        egui::CollapsingHeader::new("Quellen und Hinweise").default_open(false).show(ui, |ui| {
+        egui::CollapsingHeader::new(t!("Quellen und Hinweise", "Sources and notes")).default_open(false).show(ui, |ui| {
             for (n, s) in self.hub.source_status() {
                 ui.label(format!("{n}: {s}"));
             }
             if cfg!(windows) {
             ui.label(RichText::new(
-                "Windows liefert ohne Treiber nur Auslastung, Takt, RAM-Belegung und ACPI-Temperaturen. \
+                t!("Windows liefert ohne Treiber nur Auslastung, Takt, RAM-Belegung und ACPI-Temperaturen. \
                  Für CPU-, DIMM- und Mainboard-Temperaturen, Spannungen, Lüfter, WHEA-Fehler und aktuelle Timings: \
                  HWiNFO64 starten → Einstellungen → „Shared Memory Support“ aktivieren. RAMForge liest die Werte dann automatisch mit. \
-                 Ein eigener Treiber (PawnIO) ist geplant. Die Boot-Variante liest alles direkt über Linux-Treiber.",
+                 Ein eigener Treiber (PawnIO) ist geplant. Die Boot-Variante liest alles direkt über Linux-Treiber.", "Without a driver, Windows only provides load, clock, RAM usage and ACPI temperatures. For CPU, DIMM and mainboard temperatures, voltages, fans, WHEA errors and current timings: start HWiNFO64 → Settings → enable “Shared Memory Support”. RAMForge then reads the values automatically. An own driver (PawnIO) is planned. The boot version reads everything directly via Linux drivers."),
             ).small());
             } else {
                 ui.label(RichText::new(
-                    "Hier im Boot-System kommen Temperaturen, Spannungen und Lüfter von den Linux-hwmon-Treibern, \
-                     SPD-Daten über i2c (ee1004 für DDR4, spd5118 für DDR5). In virtuellen Maschinen fehlen diese Sensoren meist.",
+                    t!("Hier im Boot-System kommen Temperaturen, Spannungen und Lüfter von den Linux-hwmon-Treibern, \
+                     SPD-Daten über i2c (ee1004 für DDR4, spd5118 für DDR5). In virtuellen Maschinen fehlen diese Sensoren meist.", "In the boot system, temperatures, voltages and fans come from the Linux hwmon drivers, SPD data via i2c (ee1004 for DDR4, spd5118 for DDR5). Virtual machines usually lack these sensors."),
                 ).small());
             }
         });
@@ -2442,7 +2716,7 @@ impl RamForgeApp {
             egui_plot::Plot::new("sensor_plot")
                 .height(190.0)
                 .legend(egui_plot::Legend::default())
-                .x_axis_label("Sekunden")
+                .x_axis_label(t!("Sekunden", "Seconds"))
                 .allow_scroll(false)
                 .show(ui, move |p| {
                     for (name, pts) in series {
@@ -2451,11 +2725,14 @@ impl RamForgeApp {
                         p.line(egui_plot::Line::new(name, egui_plot::PlotPoints::from(pts)));
                     }
                 });
-            if ui.small_button("Diagramm leeren").clicked() {
+            if ui
+                .small_button(t!("Diagramm leeren", "Clear chart"))
+                .clicked()
+            {
                 self.plot_ids.clear();
             }
         } else {
-            ui.label(RichText::new("Auf einen Sensornamen klicken, um seinen Verlauf als Diagramm zu sehen (bis zu 6).").small().weak());
+            ui.label(RichText::new(t!("Auf einen Sensornamen klicken, um seinen Verlauf als Diagramm zu sehen (bis zu 6).", "Click a sensor name to see its history as a chart (up to 6).")).small().weak());
         }
 
         let filter = self.sensor_filter.to_lowercase();
@@ -2482,58 +2759,72 @@ impl RamForgeApp {
                     .id_salt(g)
                     .default_open(true)
                     .show(ui, |ui| {
-                        egui::Grid::new(("sg", g))
-                            .num_columns(7)
-                            .striped(true)
-                            .min_col_width(40.0)
-                            .show(ui, |ui| {
-                                for h in ["", "Gerät", "Sensor", "Aktuell", "Min", "Max", "Ø"] {
-                                    ui.label(RichText::new(h).weak());
-                                }
-                                ui.end_row();
-                                let mut last_dev = String::new();
-                                for s in rows {
-                                    let id = &s.reading.id;
-                                    let pinned = self.settings.pinned_sensors.contains(id);
-                                    if ui
-                                        .selectable_label(pinned, "📌")
-                                        .on_hover_text("In der Seitenleiste anzeigen")
-                                        .clicked()
-                                    {
-                                        if pinned {
-                                            self.settings.pinned_sensors.retain(|p| p != id);
-                                        } else {
-                                            self.settings.pinned_sensors.push(id.clone());
-                                        }
-                                        self.save_settings();
+                        wide(ui, |ui| {
+                            egui::Grid::new(("sg", g))
+                                .num_columns(7)
+                                .striped(true)
+                                .min_col_width(40.0)
+                                .show(ui, |ui| {
+                                    for h in [
+                                        "",
+                                        t!("Gerät", "Device"),
+                                        "Sensor",
+                                        t!("Aktuell", "Current"),
+                                        "Min",
+                                        "Max",
+                                        "Ø",
+                                    ] {
+                                        ui.label(RichText::new(h).weak());
                                     }
-                                    if s.reading.device != last_dev {
-                                        ui.label(RichText::new(&s.reading.device).small());
-                                        last_dev = s.reading.device.clone();
-                                    } else {
-                                        ui.label("");
-                                    }
-                                    let plotted = self.plot_ids.contains(id);
-                                    if ui.selectable_label(plotted, &s.reading.label).clicked() {
-                                        if plotted {
-                                            self.plot_ids.retain(|p| p != id);
-                                        } else if self.plot_ids.len() < 6 {
-                                            self.plot_ids.push(id.clone());
-                                        }
-                                    }
-                                    let u = &s.reading.unit;
-                                    let mut cur =
-                                        RichText::new(fmt_val(s.reading.value, u)).monospace();
-                                    if let Some(c) = temp_color(s) {
-                                        cur = cur.color(c).strong();
-                                    }
-                                    ui.label(cur);
-                                    ui.monospace(fmt_val(s.min, u));
-                                    ui.monospace(fmt_val(s.max, u));
-                                    ui.monospace(fmt_val(s.avg(), u));
                                     ui.end_row();
-                                }
-                            });
+                                    let mut last_dev = String::new();
+                                    for s in rows {
+                                        let id = &s.reading.id;
+                                        let pinned = self.settings.pinned_sensors.contains(id);
+                                        if ui
+                                            .selectable_label(pinned, "📌")
+                                            .on_hover_text(t!(
+                                                "In der Seitenleiste anzeigen",
+                                                "Show in the sidebar"
+                                            ))
+                                            .clicked()
+                                        {
+                                            if pinned {
+                                                self.settings.pinned_sensors.retain(|p| p != id);
+                                            } else {
+                                                self.settings.pinned_sensors.push(id.clone());
+                                            }
+                                            self.save_settings();
+                                        }
+                                        if s.reading.device != last_dev {
+                                            ui.label(RichText::new(&s.reading.device).small());
+                                            last_dev = s.reading.device.clone();
+                                        } else {
+                                            ui.label("");
+                                        }
+                                        let plotted = self.plot_ids.contains(id);
+                                        if ui.selectable_label(plotted, &s.reading.label).clicked()
+                                        {
+                                            if plotted {
+                                                self.plot_ids.retain(|p| p != id);
+                                            } else if self.plot_ids.len() < 6 {
+                                                self.plot_ids.push(id.clone());
+                                            }
+                                        }
+                                        let u = &s.reading.unit;
+                                        let mut cur =
+                                            RichText::new(fmt_val(s.reading.value, u)).monospace();
+                                        if let Some(c) = temp_color(s) {
+                                            cur = cur.color(c).strong();
+                                        }
+                                        ui.label(cur);
+                                        ui.monospace(fmt_val(s.min, u));
+                                        ui.monospace(fmt_val(s.max, u));
+                                        ui.monospace(fmt_val(s.avg(), u));
+                                        ui.end_row();
+                                    }
+                                })
+                        });
                     });
                 }
             });
@@ -2543,12 +2834,16 @@ impl RamForgeApp {
         heading(ui, "SPD · Timings · XMP/EXPO");
         #[cfg(windows)]
         ui.label(RichText::new(
-            "Unter Windows braucht das Auslesen des SPD-Chips einen Kerneltreiber (SMBus), den diese Version noch nicht mitbringt. \
+            t!("Unter Windows braucht das Auslesen des SPD-Chips einen Kerneltreiber (SMBus), den diese Version noch nicht mitbringt. \
              Die Boot-Variante liest den SPD direkt aus. Hier können Sie einen SPD-Dump (.bin, 256 Byte DDR3, 512 Byte DDR4, 1024 Byte DDR5) laden, \
-             z. B. von der Boot-Variante oder aus einem anderen Tool. Die aktuell laufenden Timings zeigt HWiNFO im Tab Sensoren („Memory Timings“).",
+             z. B. von der Boot-Variante oder aus einem anderen Tool. Die aktuell laufenden Timings zeigt HWiNFO im Tab Sensoren („Memory Timings“).", "On Windows, reading the SPD chip needs a kernel driver (SMBus) that this version does not include yet. The boot version reads the SPD directly. Here you can load an SPD dump (.bin, 256 bytes DDR3, 512 bytes DDR4, 1024 bytes DDR5), e.g. from the boot version or another tool. HWiNFO shows the current timings in the Sensors tab (“Memory Timings”)."),
         ).small());
         // The boot edition reads SPD directly and has no file dialog.
-        if !boot_edition() && ui.button("📂 SPD-Dump laden…").clicked() {
+        if !boot_edition()
+            && ui
+                .button(t!("📂 SPD-Dump laden…", "📂 Load SPD dump…"))
+                .clicked()
+        {
             if let Some(files) = rfd::FileDialog::new()
                 .add_filter("SPD-Dump", &["bin", "spd", "dmp", "rom"])
                 .pick_files()
@@ -2578,7 +2873,7 @@ impl RamForgeApp {
             .sys
             .spd
             .iter()
-            .map(|(n, i)| (format!("Modul {n}"), Ok(i.clone())))
+            .map(|(n, i)| (tf!("Modul {n}", "Module {n}"), Ok(i.clone())))
             .collect();
         entries.extend(self.spd_files.iter().cloned());
         for (name, res) in entries {
@@ -2589,73 +2884,93 @@ impl RamForgeApp {
                     ui.label(RichText::new(e).color(BAD));
                 }
                 Ok(i) => {
-                    egui::Grid::new(("spd", name.clone()))
-                        .num_columns(2)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            let mut row = |k: &str, v: String| {
-                                ui.label(RichText::new(k).weak());
-                                ui.label(v);
-                                ui.end_row();
-                            };
-                            row("Typ", format!("{} {}", i.dram_type, i.module_type));
-                            row(
-                                "Kapazität",
-                                format!(
-                                    "{} · {} Rank(s) · x{} Chips · {} Bit{}",
-                                    report::gib(i.capacity_bytes),
-                                    i.ranks,
-                                    i.device_width,
-                                    i.bus_width,
-                                    if i.ecc { " + ECC" } else { "" }
-                                ),
-                            );
-                            row(
-                                "Hersteller",
-                                format!("{} (DRAM: {})", i.manufacturer, i.dram_manufacturer),
-                            );
-                            row("Teilenummer", i.part_number.clone());
-                            row("Herstellung", i.manufacture_date.clone());
-                            row(
-                                "XMP / EXPO",
-                                format!(
-                                    "{} / {}",
-                                    if i.xmp_present { "vorhanden" } else { "nein" },
-                                    if i.expo_present { "vorhanden" } else { "nein" }
-                                ),
-                            );
-                        });
-                    egui::Grid::new(("spdt", name.clone()))
-                        .num_columns(8)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for h in [
-                                "Profil",
-                                "MT/s",
-                                "CL",
-                                "tRCD",
-                                "tRP",
-                                "tRAS",
-                                "tRC",
-                                "tRFC1 / V",
-                            ] {
-                                ui.label(RichText::new(h).strong());
-                            }
-                            ui.end_row();
-                            for t in std::iter::once(&i.jedec).chain(i.profiles.iter()) {
-                                ui.label(&t.name);
-                                ui.label(t.speed_mts.to_string());
-                                for v in [t.cl, t.trcd, t.trp, t.tras, t.trc] {
-                                    ui.monospace(v.to_string());
+                    wide(ui, |ui| {
+                        egui::Grid::new(("spd", name.clone()))
+                            .num_columns(2)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                let mut row = |k: &str, v: String| {
+                                    ui.label(RichText::new(k).weak());
+                                    ui.label(v);
+                                    ui.end_row();
+                                };
+                                row(
+                                    t!("Typ", "Type"),
+                                    format!("{} {}", i.dram_type, i.module_type),
+                                );
+                                row(
+                                    t!("Kapazität", "Capacity"),
+                                    format!(
+                                        "{} · {} Rank(s) · x{} Chips · {} Bit{}",
+                                        report::gib(i.capacity_bytes),
+                                        i.ranks,
+                                        i.device_width,
+                                        i.bus_width,
+                                        if i.ecc { " + ECC" } else { "" }
+                                    ),
+                                );
+                                row(
+                                    t!("Hersteller", "Manufacturer"),
+                                    format!("{} (DRAM: {})", i.manufacturer, i.dram_manufacturer),
+                                );
+                                row(t!("Teilenummer", "Part number"), i.part_number.clone());
+                                row(
+                                    t!("Herstellung", "Manufactured"),
+                                    i.manufacture_date.clone(),
+                                );
+                                row(
+                                    "XMP / EXPO",
+                                    format!(
+                                        "{} / {}",
+                                        if i.xmp_present {
+                                            t!("vorhanden", "present")
+                                        } else {
+                                            t!("nein", "no")
+                                        },
+                                        if i.expo_present {
+                                            t!("vorhanden", "present")
+                                        } else {
+                                            t!("nein", "no")
+                                        }
+                                    ),
+                                );
+                            })
+                    });
+                    wide(ui, |ui| {
+                        egui::Grid::new(("spdt", name.clone()))
+                            .num_columns(8)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for h in [
+                                    t!("Profil", "Profile"),
+                                    "MT/s",
+                                    "CL",
+                                    "tRCD",
+                                    "tRP",
+                                    "tRAS",
+                                    "tRC",
+                                    "tRFC1 / V",
+                                ] {
+                                    ui.label(RichText::new(h).strong());
                                 }
-                                ui.label(format!(
-                                    "{:.0} ns / {}",
-                                    t.trfc1_ns,
-                                    t.voltage_v.map(|v| format!("{v:.2} V")).unwrap_or_default()
-                                ));
                                 ui.end_row();
-                            }
-                        });
+                                for t in std::iter::once(&i.jedec).chain(i.profiles.iter()) {
+                                    ui.label(&t.name);
+                                    ui.label(t.speed_mts.to_string());
+                                    for v in [t.cl, t.trcd, t.trp, t.tras, t.trc] {
+                                        ui.monospace(v.to_string());
+                                    }
+                                    ui.label(format!(
+                                        "{:.0} ns / {}",
+                                        t.trfc1_ns,
+                                        t.voltage_v
+                                            .map(|v| format!("{v:.2} V"))
+                                            .unwrap_or_default()
+                                    ));
+                                    ui.end_row();
+                                }
+                            })
+                    });
                     for n in &i.notes {
                         ui.label(RichText::new(n).small().color(WARN));
                     }
@@ -2666,28 +2981,33 @@ impl RamForgeApp {
 
     fn tab_log(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            heading(ui, "Protokoll");
+            heading(ui, t!("Protokoll", "Log"));
             if ui.button("📂 Logs").clicked() {
                 paths::open_folder(&self.paths.logs);
             }
-            if ui.button("📂 Berichte").clicked() {
+            if ui.button(t!("📂 Berichte", "📂 Reports")).clicked() {
                 paths::open_folder(&self.paths.reports);
             }
             if ui.button("📂 Screenshots").clicked() {
                 paths::open_folder(&self.paths.screenshots);
             }
-            if ui.button("📂 Datenordner").clicked() {
+            if ui.button(t!("📂 Datenordner", "📂 Data folder")).clicked() {
                 paths::open_folder(&self.paths.root);
             }
         });
         ui.label(
-            RichText::new(format!("Logdatei: {}", self.log.path.display()))
+            RichText::new(tf!("Logdatei: {}", "Log file: {}", self.log.path.display()))
                 .small()
                 .weak(),
         );
         if !self.sessions.is_empty() {
             egui::CollapsingHeader::new(
-                RichText::new(format!("Sensorverläufe ({})", self.sessions.len())).strong(),
+                RichText::new(tf!(
+                    "Sensorverläufe ({})",
+                    "Sensor histories ({})",
+                    self.sessions.len()
+                ))
+                .strong(),
             )
             .id_salt("log-sessions")
             .default_open(true)
@@ -2699,7 +3019,7 @@ impl RamForgeApp {
                             if s.label == "bench" {
                                 "Benchmark"
                             } else {
-                                "RAM-Test"
+                                t!("RAM-Test", "RAM test")
                             },
                             s.started.format("%H:%M"),
                             crate::chart::fmt_secs(s.duration_secs)
@@ -2739,61 +3059,62 @@ impl RamForgeApp {
             ui.label(RichText::new("Forge").size(30.0).strong());
             ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).weak());
         });
-        ui.label("Portabler RAM-Test, Benchmark und Hardware-Monitor. Freie Software unter der GPL-3.0-or-later.");
-        ui.label(RichText::new("© 2026 Daniel Airich und RAMForge-Mitwirkende · Idee, Projektleitung und Code: Daniel Airich").strong());
+        ui.label(t!("Portabler RAM-Test, Benchmark und Hardware-Monitor. Freie Software unter der GPL-3.0-or-later.", "Portable RAM test, benchmark and hardware monitor. Free software under the GPL-3.0-or-later."));
+        ui.label(RichText::new(t!("© 2026 Daniel Airich und RAMForge-Mitwirkende · Idee, Projektleitung und Code: Daniel Airich", "© 2026 Daniel Airich and RAMForge contributors · Idea, project lead and code: Daniel Airich")).strong());
         ui.add_space(6.0);
-        egui::Grid::new("about").num_columns(2).show(ui, |ui| {
-            for (k, url) in [
-                ("Website", URL_SITE),
-                ("Haftungsausschluss", URL_DISCLAIMER),
-                ("Datenschutz", URL_PRIVACY),
-                ("Quellcode", URL_SOURCE),
-            ] {
-                ui.label(RichText::new(k).weak());
-                ui.hyperlink_to(url, url);
+        wide(ui, |ui| {
+            egui::Grid::new("about").num_columns(2).show(ui, |ui| {
+                for (k, url) in [
+                    ("Website", URL_SITE),
+                    (t!("Haftungsausschluss", "Disclaimer"), URL_DISCLAIMER),
+                    ("Datenschutz", URL_PRIVACY),
+                    (t!("Quellcode", "Source code"), URL_SOURCE),
+                ] {
+                    ui.label(RichText::new(k).weak());
+                    ui.hyperlink_to(url, url);
+                    ui.end_row();
+                }
+                ui.label(RichText::new(t!("Datenordner", "Data folder")).weak());
+                if ui.link(self.paths.root.display().to_string()).clicked() {
+                    paths::open_folder(&self.paths.root);
+                }
                 ui.end_row();
-            }
-            ui.label(RichText::new("Datenordner").weak());
-            if ui.link(self.paths.root.display().to_string()).clicked() {
-                paths::open_folder(&self.paths.root);
-            }
-            ui.end_row();
+            })
         });
         ui.add_space(6.0);
         egui::Frame::group(ui.style()).inner_margin(10.0).show(ui, |ui| {
-            ui.label(RichText::new("Updates, Neuigkeiten und Statistik").strong());
+            ui.label(RichText::new(t!("Updates, Neuigkeiten und Statistik", "Updates, news and statistics")).strong());
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut self.settings.check_updates, "Beim Start nach Updates und Neuigkeiten suchen").changed() {
+                if ui.checkbox(&mut self.settings.check_updates, t!("Beim Start nach Updates und Neuigkeiten suchen", "Check for updates and news at start")).changed() {
                     self.save_settings();
                 }
                 let can = ramforge_update::key::is_configured() && !self.updater.is_checking();
-                if ui.add_enabled(can, egui::Button::new("Jetzt suchen")).clicked() {
+                if ui.add_enabled(can, egui::Button::new(t!("Jetzt suchen", "Check now"))).clicked() {
                     self.updater.check_in_background("");
                 }
             });
-            ui.label(RichText::new(format!(
-                "Fragt {} ab. Updates werden nur installiert, wenn die Ed25519-Signatur und die SHA-256-Prüfsumme stimmen. Übertragen werden nur Programmversion und Sprache.",
+            ui.label(RichText::new(tf!("Fragt {} ab. Updates werden nur installiert, wenn die Ed25519-Signatur und die SHA-256-Prüfsumme stimmen. Übertragen werden nur Programmversion und Sprache.", "Queries {}. Updates are only installed if the Ed25519 signature and the SHA-256 checksum match. Only the program version and language are transmitted.",
                 ramforge_update::MANIFEST_URL
             )).small().weak());
-            ui.label(RichText::new("Fingerabdrücke der Update-Schlüssel (SHA-256, müssen mit ramforge.org übereinstimmen):").small());
-            egui::Grid::new("fingerprints").num_columns(2).show(ui, |ui| {
+            ui.label(RichText::new(t!("Fingerabdrücke der Update-Schlüssel (SHA-256, müssen mit ramforge.org übereinstimmen):", "Fingerprints of the update keys (SHA-256, must match ramforge.org):")).small());
+            wide(ui, |ui| egui::Grid::new("fingerprints").num_columns(2).show(ui, |ui| {
                 for (name, fp) in ramforge_update::key::fingerprints() {
                     ui.label(RichText::new(name).small().strong());
                     ui.monospace(RichText::new(fp).small());
                     ui.end_row();
                 }
-            });
+            }));
             if ramforge_update::key::is_placeholder() {
-                ui.label(RichText::new("Entwicklungsversion: Test- bzw. Platzhalterschlüssel, keine offizielle Release-Version.").small().color(WARN));
+                ui.label(RichText::new(t!("Entwicklungsversion: Test- bzw. Platzhalterschlüssel, keine offizielle Release-Version.", "Development build: test or placeholder keys, not an official release.")).small().color(WARN));
             }
             let mut stats = self.settings.stats_consent;
-            if ui.checkbox(&mut stats, "Anonyme Statistik senden").changed() {
+            if ui.checkbox(&mut stats, t!("Anonyme Statistik senden", "Send anonymous statistics")).changed() {
                 self.set_stats_consent(stats);
             }
             ui.label(
                 RichText::new(
-                    "Freiwillig, standardmäßig aus. Höchstens einmal am Tag: zufällige Installations-ID, Version, Edition, grobe Windows-Version. \
-                     Ausschalten sendet eine Löschanfrage an den Server und löscht die lokale ID.",
+                    t!("Freiwillig, standardmäßig aus. Höchstens einmal am Tag: zufällige Installations-ID, Version, Edition, grobe Betriebssystem-Version. \
+                     Ausschalten sendet eine Löschanfrage an den Server und löscht die lokale ID.", "Optional, off by default. At most once a day: random installation ID, version, edition, rough operating system version. Switching off sends a deletion request to the server and deletes the local ID."),
                 )
                 .small()
                 .weak(),
@@ -2801,9 +3122,9 @@ impl RamForgeApp {
         });
         let news = self.news.lock().unwrap().clone();
         if let Some(items) = news {
-            heading(ui, "Neuigkeiten");
+            heading(ui, t!("Neuigkeiten", "News"));
             if items.is_empty() {
-                ui.label(RichText::new("Keine Neuigkeiten.").weak());
+                ui.label(RichText::new(t!("Keine Neuigkeiten.", "No news.")).weak());
             }
             for n in &items {
                 egui::Frame::group(ui.style())
@@ -2828,7 +3149,7 @@ impl RamForgeApp {
                         // Plain text only, never interpreted as HTML or markup.
                         ui.label(&n.body);
                         if !n.url.is_empty() {
-                            ui.hyperlink_to("Mehr dazu", &n.url);
+                            ui.hyperlink_to(t!("Mehr dazu", "Read more"), &n.url);
                         }
                     });
             }
@@ -2836,7 +3157,7 @@ impl RamForgeApp {
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(SPONSOR_NOTE).small().weak());
+            ui.label(RichText::new(sponsor_note()).small().weak());
             ui.hyperlink_to(
                 RichText::new("nerdscave-consulting.com").small(),
                 URL_SPONSOR,
@@ -2844,10 +3165,43 @@ impl RamForgeApp {
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
+            ui.label(t!("Anzeigegröße", "Display size"));
+            let z = ui.ctx().zoom_factor();
+            let ctx = ui.ctx().clone();
+            if ui
+                .button("−")
+                .on_hover_text(t!("Strg + Minus", "Ctrl + minus"))
+                .clicked()
+            {
+                self.set_zoom(&ctx, z - 0.1);
+            }
+            ui.label(format!("{:.0} %", z * 100.0));
+            if ui
+                .button("+")
+                .on_hover_text(t!("Strg + Plus", "Ctrl + plus"))
+                .clicked()
+            {
+                self.set_zoom(&ctx, z + 0.1);
+            }
+            if ui
+                .selectable_label(self.settings.zoom == 0.0, t!("Automatisch", "Automatic"))
+                .on_hover_text(t!(
+                    "100 %, auf kleinen Bildschirmen kleiner",
+                    "100 %, smaller on small screens"
+                ))
+                .clicked()
+            {
+                self.set_zoom(&ctx, 0.0);
+            }
+        });
+        ui.horizontal(|ui| {
             if ui
                 .checkbox(
                     &mut self.settings.anonymize_reports,
-                    "Rechnername und Seriennummern in Berichten ausblenden",
+                    t!(
+                        "Rechnername und Seriennummern in Berichten ausblenden",
+                        "Hide computer name and serial numbers in reports"
+                    ),
                 )
                 .changed()
             {
@@ -2855,10 +3209,30 @@ impl RamForgeApp {
             }
         });
         md_view(ui, DISCLAIMER_MD);
-        heading(ui, "Danksagung");
+        heading(ui, t!("Danksagung", "Acknowledgements"));
         ui.label(RichText::new(
-            "Testverfahren nach öffentlicher Fachliteratur (Moving Inversions, March-Tests, Modulo-X, Bit Fade, Row Hammer). \
-             Oberfläche mit egui/eframe. Optionaler Booteintrag: Memtest86+ (GPL-2.0). Sensorwerte optional über die Shared-Memory-Schnittstelle von HWiNFO.",
+            t!("Testverfahren nach öffentlicher Fachliteratur (Moving Inversions, March-Tests, Modulo-X, Bit Fade, Row Hammer). \
+             Oberfläche mit egui/eframe. Optionaler Booteintrag: Memtest86+ (GPL-2.0). Sensorwerte optional über die Shared-Memory-Schnittstelle von HWiNFO.", "Test methods from public literature (moving inversions, March tests, modulo-X, bit fade, row hammer). Interface built with egui/eframe. Optional boot entry: Memtest86+ (GPL-2.0). Sensor values optionally via HWiNFO's shared memory interface."),
         ).small());
+    }
+}
+
+/// Wide tables scroll sideways instead of being cut off at the window edge.
+pub(crate) fn wide<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::ScrollArea::horizontal()
+        .id_salt(ui.next_auto_id())
+        .auto_shrink([false, true])
+        .show(ui, add)
+        .inner
+}
+
+/// Automatic zoom: 100 %, but shrinks until about 1400 points fit across
+/// (the layout's comfortable width), never below 60 %.
+fn auto_zoom(ctx: &egui::Context) -> f32 {
+    let width_at_100 = ctx.content_rect().width() * ctx.zoom_factor();
+    if width_at_100 > 0.0 && width_at_100 < 1400.0 {
+        (width_at_100 / 1400.0).max(0.6)
+    } else {
+        1.0
     }
 }
